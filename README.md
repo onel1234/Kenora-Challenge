@@ -33,7 +33,9 @@ Create a dedicated project in your existing Supabase account. Apply `supabase/mi
 
 ## Netlify deployment
 
-The `netlify.toml` uses `npm run build`, publishes `.next`, and selects Node 22. Netlify detects Next.js and installs its OpenNext adapter. Create/link a Netlify project. Set `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY` for build and functions. The two public variables must exist **at build time**; changing them requires rebuilding. Keep `SEED_PASSWORD` local. Run `netlify deploy --build --prod` or connect this repository for automatic builds.
+The live Netlify project is connected to [onel1234/Kenora-Challenge](https://github.com/onel1234/Kenora-Challenge), with **`main` as its production branch**. Every push to `main`, including a merged pull request, triggers a production build and updates the [existing live URL](https://gather-workshop-desk-20261009.netlify.app) after successful deployment. Monitor progress and build errors in the project's [Netlify Deploys page](https://app.netlify.com/projects/gather-workshop-desk-20261009/deploys). A failed build leaves the previous successful deployment live. This uses Netlify's repository connection and GitHub push webhook; no local deploy command is needed for changes merged into `main`.
+
+The `netlify.toml` uses `npm run build`, publishes `.next`, and selects Node 22. Netlify detects Next.js and installs its OpenNext adapter. `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY` must be set in Netlify for build and functions. The two public variables must exist **at build time**; changing them requires rebuilding. Keep `SEED_PASSWORD` local and all secret values out of GitHub. For a separate installation, link your repository to a Netlify project and select its production branch using [Netlify's continuous deployment setup](https://docs.netlify.com/build/configure-builds/overview/).
 
 Staff sign-in is required. The application loads the authenticated user's profile and role from Supabase, and every change goes through the authenticated API.
 
