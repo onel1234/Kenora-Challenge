@@ -21,10 +21,13 @@ import {
   ChevronRight,
   RefreshCw,
   LoaderCircle,
+  Sparkles,
+  Rows3,
 } from "lucide-react";
 import { browserClient } from "@/lib/supabase";
 import { dateBoundary } from "@/lib/dates";
 import type { Data, Profile, Workshop } from "@/lib/types";
+
 const empty: Data = { workshops: [], registrations: [], users: [], audit: [] };
 const date = (s: string) =>
   new Date(s).toLocaleDateString("en-GB", {
@@ -38,6 +41,15 @@ const time = (s: string) =>
     minute: "2-digit",
   });
 const human = (s: string) => s.replaceAll("_", " ");
+const initials = (name: string) =>
+  name
+    .split(" ")
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((n) => n[0])
+    .join("")
+    .toUpperCase();
+
 export default function Home() {
   const [client] = useState(browserClient),
     [profile, setProfile] = useState<Profile | null>(null),
@@ -47,6 +59,9 @@ export default function Home() {
     [search, setSearch] = useState(""),
     [status, setStatus] = useState("all"),
     [location, setLocation] = useState("all"),
+    [categoryFilter, setCategoryFilter] = useState("all"),
+    [viewMode, setViewMode] = useState<"grid" | "list">("grid"),
+    [regStatusFilter, setRegStatusFilter] = useState<"all" | "active" | "cancelled">("all"),
     [available, setAvailable] = useState(false),
     [from, setFrom] = useState(""),
     [to, setTo] = useState(""),
@@ -58,6 +73,7 @@ export default function Home() {
     [notice, setNotice] = useState(""),
     [loginError, setLoginError] = useState("");
   const [cancelId, setCancelId] = useState<string | null>(null);
+
   useEffect(() => {
     if (!modal && !selected && !cancelId) return;
     const previous = document.activeElement as HTMLElement;
@@ -94,16 +110,19 @@ export default function Home() {
       previous?.focus();
     };
   }, [modal, selected?.id, cancelId, busy]);
+
   useEffect(() => {
     if (profile?.role === "admin" && !["Team", "Activity"].includes(page))
       setPage("Team");
     if (profile && profile.role !== "admin" && page === "Team")
       setPage("Workshops");
   }, [profile?.role, page]);
+
   async function token() {
     const s = await client?.auth.getSession();
     return s?.data.session?.access_token;
   }
+
   async function reload() {
     if (!client) return;
     const access = await token();
@@ -116,6 +135,7 @@ export default function Home() {
     setProfile(payload.profile);
     setData(payload);
   }
+
   useEffect(() => {
     let mounted = true;
     if (!client) {
@@ -135,16 +155,19 @@ export default function Home() {
       mounted = false;
     };
   }, [client]);
+
   useEffect(() => {
     if (!profile) return;
     const interval = setInterval(() => reload().catch(() => {}), 15000);
     return () => clearInterval(interval);
   }, [profile?.id]);
+
   useEffect(() => {
     if (!notice) return;
     const timeout = setTimeout(() => setNotice(""), 5000);
     return () => clearTimeout(timeout);
   }, [notice]);
+
   async function mutate(
     path: string,
     input: Record<string, unknown>,
@@ -184,6 +207,7 @@ export default function Home() {
       setBusy(false);
     }
   }
+
   async function signout() {
     await client?.auth.signOut();
     setProfile(null);
@@ -195,9 +219,16 @@ export default function Home() {
     setCancelId(null);
     setNotice("");
   }
+
   const current = selected
     ? data.workshops.find((w) => w.id === selected.id) || selected
     : null;
+
+  const categories = useMemo(
+    () => Array.from(new Set(data.workshops.map((w) => w.category))),
+    [data.workshops],
+  );
+
   const filtered = useMemo(
     () =>
       data.workshops.filter(
@@ -207,6 +238,7 @@ export default function Home() {
             .includes(search.toLowerCase()) &&
           (status === "all" || w.status === status) &&
           (location === "all" || w.location === location) &&
+          (categoryFilter === "all" || w.category === categoryFilter) &&
           (!available ||
             (w.capacity > w.active_count &&
               w.status === "scheduled" &&
@@ -214,51 +246,84 @@ export default function Home() {
           (!from || w.starts_at >= dateBoundary(from)) &&
           (!to || w.starts_at < dateBoundary(to, true)),
       ),
-    [data.workshops, search, status, location, available, from, to],
+    [data.workshops, search, status, location, categoryFilter, available, from, to],
   );
+
   if (!ready)
     return (
       <main className="loading">
-        <Sprout size={36} />
+        <span className="brand-mark">
+          <Sprout size={22} />
+        </span>
         <p>Opening your workshop desk…</p>
       </main>
     );
+
   if (!profile)
     return (
       <main className="login-page">
         <section className="login-story">
-          <div className="brand">
-            <Sprout />
-            <span>
-              gather<span className="brand-dot">.</span>
-            </span>
+          <div className="login-story-top">
+            <div className="brand">
+              <span className="brand-mark">
+                <Sprout size={20} />
+              </span>
+              <span>
+                gather<span className="brand-dot">.</span>
+              </span>
+            </div>
+            <span className="edition-pill">EDITION 04 · WORKSHOP DESK</span>
           </div>
           <div className="story-copy">
             <div className="eyebrow">SPACE FOR SOMETHING NEW</div>
             <h1>
               Good things happen
               <br />
-              when we gather.
+              when we <em className="editorial-italic">gather.</em>
             </h1>
             <p>
               A little creativity. A new skill. A shared experience.
               <br />
               Give your community more room to grow.
             </p>
-            <div className="abstract-art">
+            <div className="abstract-art" aria-hidden="true">
               <span className="arch arch-one" />
               <span className="arch arch-two" />
               <span className="art-circle" />
               <span className="art-line" />
               <Sprout size={125} />
+              <div className="story-floating-card card-one">
+                <span className="stat-icon" style={{ width: 34, height: 34, borderRadius: 9 }}>
+                  <Sparkles size={16} />
+                </span>
+                <div>
+                  <strong>Ceramic Handbuilding</strong>
+                  <small>POT-104 · 12 / 12 seats confirmed</small>
+                </div>
+              </div>
+              <div className="story-floating-card card-two">
+                <span className="live-dot" />
+                <div>
+                  <strong>Botanical Dyeing Studio</strong>
+                  <small>Central Studio · 4 seats open</small>
+                </div>
+              </div>
             </div>
           </div>
-          <footer>Community workshops, thoughtfully organised.</footer>
+          <footer>
+            <span>Community workshops, thoughtfully organised.</span>
+            <div className="story-pillars">
+              <span>01 / REALTIME CAPACITY</span>
+              <span>02 / ZERO OVERBOOKING</span>
+            </div>
+          </footer>
         </section>
         <section className="login-form">
           <div className="eyebrow">YOUR COMMUNITY. CONNECTED.</div>
-          <h2>Welcome to the desk.</h2>
-          <p>Sign in to manage your community’s workshops.</p>
+          <h2>
+            Welcome to the <em className="editorial-italic">desk.</em>
+          </h2>
+          <p>Sign in to manage your community’s workshops, seats, and roster.</p>
           <form
             onSubmit={async (e) => {
               e.preventDefault();
@@ -321,34 +386,65 @@ export default function Home() {
         </section>
       </main>
     );
+
   const operational = profile.role !== "admin";
   const active = data.workshops.filter(
     (w) => w.status === "scheduled" && new Date(w.starts_at) > new Date(),
   );
   const total = active.reduce((n, w) => n + w.active_count, 0),
-    seats = active.reduce((n, w) => n + w.capacity - w.active_count, 0);
+    seats = active.reduce((n, w) => n + w.capacity - w.active_count, 0),
+    totalCapacity = total + seats,
+    occupancyRate = totalCapacity > 0 ? Math.round((total / totalCapacity) * 100) : 0;
+
+  const auditFiltered = data.audit.filter((a) =>
+    operational
+      ? !["account_created", "role_changed"].includes(a.action)
+      : ["account_created", "role_changed"].includes(a.action),
+  );
+
+  const filteredRegistrations = data.registrations.filter(
+    (r) =>
+      (regStatusFilter === "all" || r.status === regStatusFilter) &&
+      (
+        r.attendee_name +
+        " " +
+        r.attendee_email +
+        " " +
+        (data.workshops.find((w) => w.id === r.workshop_id)?.title || "") +
+        " " +
+        (data.workshops.find((w) => w.id === r.workshop_id)?.code || "")
+      )
+        .toLowerCase()
+        .includes(search.toLowerCase()),
+  );
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand">
-          <Sprout />
+          <span className="brand-mark">
+            <Sprout size={19} />
+          </span>
           <span>
             gather<span className="brand-dot">.</span>
           </span>
         </div>
-        <div className="workspace-label">COMMUNITY WORKSHOP DESK</div>
+        <div className="workspace-label">
+          <span>COMMUNITY WORKSHOP DESK</span>
+          <span className="workspace-edition">DESK</span>
+        </div>
         <nav>
           {(operational
             ? [
-                ["Workshops", LayoutGrid],
-                ["Registrations", ClipboardList],
-                ["Activity", History],
+                ["Workshops", LayoutGrid, data.workshops.length],
+                ["Registrations", ClipboardList, data.registrations.length],
+                ["Activity", History, auditFiltered.length],
               ]
             : [
-                ["Team", Users],
-                ["Activity", History],
+                ["Team", Users, data.users.length],
+                ["Activity", History, auditFiltered.length],
               ]
-          ).map(([label, Icon]) => {
+          ).map(([label, Icon, count]) => {
             const NavIcon = Icon as typeof Users;
             return (
               <button
@@ -360,9 +456,9 @@ export default function Home() {
                   setError("");
                 }}
               >
-                <NavIcon size={19} />
+                <NavIcon size={18} />
                 {String(label)}
-                {label === "Workshops" && <span>{data.workshops.length}</span>}
+                <span>{Number(count)}</span>
               </button>
             );
           })}
@@ -370,7 +466,7 @@ export default function Home() {
         <div className="sidebar-bottom">
           <div className="help-card">
             <span className="help-icon">
-              <Sprout size={20} />
+              <Sprout size={18} />
             </span>
             <h4>A little room to grow.</h4>
             <p>
@@ -378,20 +474,26 @@ export default function Home() {
               <br />
               We’ll keep track of the seats.
             </p>
+            {operational && totalCapacity > 0 && (
+              <div className="sidebar-capacity-mini">
+                <div>
+                  <small>Programme fill</small>
+                  <strong>{occupancyRate}%</strong>
+                </div>
+                <div className="progress">
+                  <span style={{ width: `${occupancyRate}%` }} />
+                </div>
+              </div>
+            )}
           </div>
           <div className="user-block">
-            <div className="avatar">
-              {profile.name
-                .split(" ")
-                .map((n) => n[0])
-                .join("")}
-            </div>
+            <div className="avatar">{initials(profile.name)}</div>
             <div>
               <strong>{profile.name}</strong>
               <small>{profile.role}</small>
             </div>
             <button onClick={signout} title="Sign out" aria-label="Sign out">
-              <LogOut size={17} />
+              <LogOut size={16} />
             </button>
           </div>
         </div>
@@ -402,10 +504,13 @@ export default function Home() {
             Workspace <ChevronRight size={13} /> <strong>{page}</strong>
           </span>
           <div>
-            <span className="live-dot" />
-            Staff workspace
+            <span className="topbar-meta-pill">
+              <span className="live-dot" />
+              Staff workspace
+            </span>
             <button
               aria-label="Refresh data"
+              title="Refresh data"
               onClick={() => {
                 reload().catch((e) => setError(e.message));
               }}
@@ -423,13 +528,26 @@ export default function Home() {
                   : "PEOPLE BEHIND THE PROGRAMME"}
               </div>
               <h1>
-                {page === "Workshops"
-                  ? "Your next great gathering."
-                  : page === "Registrations"
-                    ? "Every seat has a story."
-                    : page === "Team"
-                      ? "A good team starts here."
-                      : "The story so far."}
+                {page === "Workshops" ? (
+                  <>
+                    Your next great{" "}
+                    <em className="editorial-italic">gathering.</em>
+                  </>
+                ) : page === "Registrations" ? (
+                  <>
+                    Every seat has a{" "}
+                    <em className="editorial-italic">story.</em>
+                  </>
+                ) : page === "Team" ? (
+                  <>
+                    A good team starts{" "}
+                    <em className="editorial-italic">here.</em>
+                  </>
+                ) : (
+                  <>
+                    The story <em className="editorial-italic">so far.</em>
+                  </>
+                )}
               </h1>
               <p>
                 {page === "Workshops"
@@ -482,36 +600,53 @@ export default function Home() {
                   <span className="stat-icon">
                     <CalendarDays />
                   </span>
-                  <div>
+                  <div style={{ flex: 1 }}>
                     <small>Upcoming workshops</small>
                     <strong>
                       {active.length}
                       <span>on the calendar</span>
                     </strong>
+                    <div className="stat-bar">
+                      <span
+                        style={{
+                          width: `${data.workshops.length ? Math.max(18, Math.round((active.length / data.workshops.length) * 100)) : 35}%`,
+                        }}
+                      />
+                    </div>
                   </div>
                 </div>
                 <div>
                   <span className="stat-icon">
                     <Users />
                   </span>
-                  <div>
+                  <div style={{ flex: 1 }}>
                     <small>Confirmed attendees</small>
                     <strong>
                       {total}
                       <span>ready to join in</span>
                     </strong>
+                    <div className="stat-bar">
+                      <span style={{ width: `${Math.max(12, occupancyRate)}%` }} />
+                    </div>
                   </div>
                 </div>
                 <div>
                   <span className="stat-icon">
                     <Sprout />
                   </span>
-                  <div>
+                  <div style={{ flex: 1 }}>
                     <small>Seats still available</small>
                     <strong>
                       {seats}
                       <span>room for more</span>
                     </strong>
+                    <div className="stat-bar">
+                      <span
+                        style={{
+                          width: `${totalCapacity > 0 ? Math.max(12, 100 - occupancyRate) : 65}%`,
+                        }}
+                      />
+                    </div>
                   </div>
                 </div>
               </div>
@@ -520,8 +655,65 @@ export default function Home() {
                   <h2>
                     Workshop catalogue <span>{filtered.length}</span>
                   </h2>
-                  <small>All times shown in your local timezone</small>
+                  <small>
+                    <Clock size={13} /> All times shown in your local timezone
+                  </small>
                 </div>
+
+                {categories.length > 0 && (
+                  <div className="catalogue-toolbar">
+                    <div className="category-pills">
+                      <button
+                        type="button"
+                        className={
+                          categoryFilter === "all"
+                            ? "cat-pill active"
+                            : "cat-pill"
+                        }
+                        onClick={() => setCategoryFilter("all")}
+                      >
+                        All themes
+                      </button>
+                      {categories.map((cat) => (
+                        <button
+                          type="button"
+                          key={cat}
+                          className={
+                            categoryFilter === cat
+                              ? "cat-pill active"
+                              : "cat-pill"
+                          }
+                          onClick={() =>
+                            setCategoryFilter(
+                              categoryFilter === cat ? "all" : cat,
+                            )
+                          }
+                        >
+                          {cat}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="view-toggle" role="group" aria-label="Catalogue layout">
+                      <button
+                        type="button"
+                        className={viewMode === "grid" ? "active" : ""}
+                        onClick={() => setViewMode("grid")}
+                      >
+                        <LayoutGrid size={14} />
+                        Gallery
+                      </button>
+                      <button
+                        type="button"
+                        className={viewMode === "list" ? "active" : ""}
+                        onClick={() => setViewMode("list")}
+                      >
+                        <Rows3 size={14} />
+                        Schedule
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 <div className="filters">
                   <div className="search">
                     <Search size={17} />
@@ -531,6 +723,21 @@ export default function Home() {
                       value={search}
                       onChange={(e) => setSearch(e.target.value)}
                     />
+                    {search && (
+                      <button
+                        type="button"
+                        aria-label="Clear search"
+                        style={{
+                          border: 0,
+                          background: "none",
+                          color: "#889480",
+                          padding: 4,
+                        }}
+                        onClick={() => setSearch("")}
+                      >
+                        <X size={14} />
+                      </button>
+                    )}
                   </div>
                   <select
                     aria-label="Workshop location"
@@ -588,6 +795,7 @@ export default function Home() {
                     to ||
                     available ||
                     search ||
+                    categoryFilter !== "all" ||
                     status !== "all" ||
                     location !== "all") && (
                     <button
@@ -597,6 +805,7 @@ export default function Home() {
                         setSearch("");
                         setStatus("all");
                         setLocation("all");
+                        setCategoryFilter("all");
                         setAvailable(false);
                       }}
                     >
@@ -607,17 +816,31 @@ export default function Home() {
                     {filtered.length} workshop{filtered.length === 1 ? "" : "s"}
                   </span>
                 </div>
-                <div className="workshop-grid">
+                <div
+                  className={
+                    viewMode === "list"
+                      ? "workshop-grid list-view"
+                      : "workshop-grid"
+                  }
+                >
                   {filtered.map((w, i) => {
                     const full = w.active_count >= w.capacity,
                       closed =
                         w.status !== "scheduled" ||
-                        new Date(w.starts_at) <= new Date();
+                        new Date(w.starts_at) <= new Date(),
+                      artTheme =
+                        w.category === "Technology"
+                          ? "code"
+                          : w.category === "Wellbeing"
+                            ? "well"
+                            : w.category === "Food & Living"
+                              ? "food"
+                              : i % 2
+                                ? "paint"
+                                : "clay";
                     return (
                       <article className="workshop-card" key={w.id}>
-                        <div
-                          className={`card-art art-${w.category === "Technology" ? "code" : w.category === "Wellbeing" ? "well" : w.category === "Food & Living" ? "food" : i % 2 ? "paint" : "clay"}`}
-                        >
+                        <div className={`card-art art-${artTheme}`}>
                           <span className="category">{w.category}</span>
                           <span
                             className={`badge ${full ? "full" : closed ? "closed" : ""}`}
@@ -644,67 +867,71 @@ export default function Home() {
                           </span>
                         </div>
                         <div className="card-body">
-                          <span className="workshop-code">{w.code}</span>
-                          <h3>
-                            <button onClick={() => setSelected(w)}>
-                              {w.title}
-                            </button>
-                          </h3>
-                          <p className="instructor">with {w.instructor}</p>
-                          <div className="card-meta">
-                            <span>
-                              <CalendarDays size={14} />
-                              {date(w.starts_at)}
-                              <span className="meta-dot">·</span>
-                              {time(w.starts_at)}
-                            </span>
-                            <span>
-                              <MapPin size={14} />
-                              {w.location}
-                              <span className="meta-dot">·</span>
-                              {w.duration_minutes} min
-                            </span>
+                          <div>
+                            <span className="workshop-code">{w.code}</span>
+                            <h3>
+                              <button onClick={() => setSelected(w)}>
+                                {w.title}
+                              </button>
+                            </h3>
+                            <p className="instructor">with {w.instructor}</p>
+                            <div className="card-meta">
+                              <span>
+                                <CalendarDays size={14} />
+                                {date(w.starts_at)}
+                                <span className="meta-dot">·</span>
+                                {time(w.starts_at)}
+                              </span>
+                              <span>
+                                <MapPin size={14} />
+                                {w.location}
+                                <span className="meta-dot">·</span>
+                                {w.duration_minutes} min
+                              </span>
+                            </div>
                           </div>
-                          <div className="capacity-label">
-                            <span>
-                              <strong>{w.capacity - w.active_count}</strong>{" "}
-                              seats available
-                            </span>
-                            <small>
-                              {w.active_count} / {w.capacity} booked
-                            </small>
-                          </div>
-                          <div className="progress">
-                            <span
-                              style={{
-                                width: `${(w.active_count / w.capacity) * 100}%`,
-                              }}
-                            />
-                          </div>
-                          <div className="card-footer">
-                            <button
-                              className="text-button"
-                              onClick={() => setSelected(w)}
-                            >
-                              View details
-                              <ArrowUpRight size={14} />
-                            </button>
-                            <button
-                              className="book-button"
-                              disabled={full || closed}
-                              onClick={() => {
-                                setSelected(w);
-                                setModal("register");
-                                setError("");
-                              }}
-                            >
-                              {full
-                                ? "Fully booked"
-                                : closed
-                                  ? "Closed"
-                                  : "Register attendee"}
-                              {!full && !closed && <Plus size={14} />}
-                            </button>
+                          <div>
+                            <div className="capacity-label">
+                              <span>
+                                <strong>{w.capacity - w.active_count}</strong>{" "}
+                                seats available
+                              </span>
+                              <small>
+                                {w.active_count} / {w.capacity} booked
+                              </small>
+                            </div>
+                            <div className="progress">
+                              <span
+                                style={{
+                                  width: `${Math.min(100, (w.active_count / w.capacity) * 100)}%`,
+                                }}
+                              />
+                            </div>
+                            <div className="card-footer">
+                              <button
+                                className="text-button"
+                                onClick={() => setSelected(w)}
+                              >
+                                View details
+                                <ArrowUpRight size={14} />
+                              </button>
+                              <button
+                                className="book-button"
+                                disabled={full || closed}
+                                onClick={() => {
+                                  setSelected(w);
+                                  setModal("register");
+                                  setError("");
+                                }}
+                              >
+                                {full
+                                  ? "Fully booked"
+                                  : closed
+                                    ? "Closed"
+                                    : "Register attendee"}
+                                {!full && !closed && <Plus size={14} />}
+                              </button>
+                            </div>
                           </div>
                         </div>
                       </article>
@@ -732,6 +959,24 @@ export default function Home() {
                 <h2>
                   Registration history <span>{data.registrations.length}</span>
                 </h2>
+                <div className="category-pills">
+                  {(["all", "active", "cancelled"] as const).map((st) => (
+                    <button
+                      key={st}
+                      type="button"
+                      className={
+                        regStatusFilter === st ? "cat-pill active" : "cat-pill"
+                      }
+                      onClick={() => setRegStatusFilter(st)}
+                    >
+                      {st === "all"
+                        ? "All records"
+                        : st === "active"
+                          ? "Active"
+                          : "Cancelled"}
+                    </button>
+                  ))}
+                </div>
               </div>
               <div className="search standalone">
                 <Search size={17} />
@@ -755,28 +1000,32 @@ export default function Home() {
                     </tr>
                   </thead>
                   <tbody>
-                    {data.registrations
-                      .filter((r) =>
-                        (
-                          r.attendee_name +
-                          r.attendee_email +
-                          data.workshops.find((w) => w.id === r.workshop_id)
-                            ?.title
-                        )
-                          .toLowerCase()
-                          .includes(search.toLowerCase()),
-                      )
-                      .map((r) => (
+                    {filteredRegistrations.map((r) => {
+                      const workshop = data.workshops.find(
+                        (w) => w.id === r.workshop_id,
+                      );
+                      return (
                         <tr key={r.id}>
                           <td>
-                            <strong>{r.attendee_name}</strong>
-                            <small>{r.attendee_email}</small>
+                            <div className="table-person">
+                              <span className="avatar">
+                                {initials(r.attendee_name)}
+                              </span>
+                              <div>
+                                <strong>{r.attendee_name}</strong>
+                                <small>{r.attendee_email}</small>
+                              </div>
+                            </div>
                           </td>
                           <td>
-                            {
-                              data.workshops.find((w) => w.id === r.workshop_id)
-                                ?.title
-                            }
+                            {workshop ? (
+                              <div>
+                                <strong>{workshop.title}</strong>
+                                <small>{workshop.code}</small>
+                              </div>
+                            ) : (
+                              "—"
+                            )}
                           </td>
                           <td>
                             <span className={`pill ${r.status}`}>
@@ -812,7 +1061,8 @@ export default function Home() {
                             )}
                           </td>
                         </tr>
-                      ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -847,12 +1097,7 @@ export default function Home() {
                       <tr key={u.id}>
                         <td>
                           <div className="table-person">
-                            <span className="avatar">
-                              {u.name
-                                .split(" ")
-                                .map((n) => n[0])
-                                .join("")}
-                            </span>
+                            <span className="avatar">{initials(u.name)}</span>
                             <strong>
                               {u.name}
                               {u.id === profile.id && <small>You</small>}
@@ -906,46 +1151,27 @@ export default function Home() {
             <section className="panel">
               <div className="section-heading">
                 <h2>
-                  Activity log{" "}
-                  <span>
-                    {
-                      data.audit.filter((a) =>
-                        operational
-                          ? !["account_created", "role_changed"].includes(
-                              a.action,
-                            )
-                          : ["account_created", "role_changed"].includes(
-                              a.action,
-                            ),
-                      ).length
-                    }
-                  </span>
+                  Activity log <span>{auditFiltered.length}</span>
                 </h2>
                 <small>History is preserved automatically</small>
               </div>
-              {data.audit
-                .filter((a) =>
-                  operational
-                    ? !["account_created", "role_changed"].includes(a.action)
-                    : ["account_created", "role_changed"].includes(a.action),
-                )
-                .map((a) => (
-                  <div className="activity-row" key={a.id}>
-                    <span className="activity-icon">
-                      <History size={17} />
-                    </span>
-                    <div>
-                      <strong>{a.actor_name}</strong>{" "}
-                      <span>{human(a.action)}</span>
-                      <small>
-                        {date(a.created_at)} at {time(a.created_at)}
-                      </small>
-                      {!!a.details.attendee_name && (
-                        <small>{String(a.details.attendee_name)}</small>
-                      )}
-                    </div>
+              {auditFiltered.map((a) => (
+                <div className="activity-row" key={a.id}>
+                  <span className="activity-icon">
+                    <History size={17} />
+                  </span>
+                  <div>
+                    <strong>{a.actor_name}</strong>{" "}
+                    <span>{human(a.action)}</span>
+                    <small>
+                      {date(a.created_at)} at {time(a.created_at)}
+                    </small>
+                    {!!a.details.attendee_name && (
+                      <small>{String(a.details.attendee_name)}</small>
+                    )}
                   </div>
-                ))}
+                </div>
+              ))}
               {!data.audit.length && (
                 <div className="empty">
                   <History />
@@ -982,6 +1208,41 @@ export default function Home() {
             aria-label="Workshop details"
             onClick={(e) => e.stopPropagation()}
           >
+            <div
+              className={`detail-art-banner card-art art-${
+                current.category === "Technology"
+                  ? "code"
+                  : current.category === "Wellbeing"
+                    ? "well"
+                    : current.category === "Food & Living"
+                      ? "food"
+                      : "clay"
+              }`}
+            >
+              <span className="category">{current.category}</span>
+              <span
+                className={`badge ${
+                  current.active_count >= current.capacity
+                    ? "full"
+                    : current.status !== "scheduled" ||
+                        new Date(current.starts_at) <= new Date()
+                      ? "closed"
+                      : ""
+                }`}
+              >
+                {current.status !== "scheduled" ||
+                new Date(current.starts_at) <= new Date()
+                  ? human(current.status)
+                  : current.active_count >= current.capacity
+                    ? "Fully booked"
+                    : "Open for registration"}
+              </span>
+              <div className="art-shape">
+                <span />
+                <span />
+                <span />
+              </div>
+            </div>
             <button
               className="close"
               aria-label="Close details"
@@ -1013,8 +1274,24 @@ export default function Home() {
               </span>
             </div>
             <div className="detail-capacity">
-              <strong>{current.capacity - current.active_count}</strong>
-              <span>of {current.capacity} seats available</span>
+              <div className="detail-capacity-main">
+                <strong>{current.capacity - current.active_count}</strong>
+                <span>of {current.capacity} seats available</span>
+              </div>
+              {current.capacity <= 40 && (
+                <div className="seat-matrix" aria-hidden="true">
+                  {Array.from({ length: current.capacity }, (_, idx) => (
+                    <span
+                      key={idx}
+                      className={
+                        idx < current.active_count
+                          ? "seat-dot occupied"
+                          : "seat-dot"
+                      }
+                    />
+                  ))}
+                </div>
+              )}
             </div>
             <div className="detail-actions">
               <button
