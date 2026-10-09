@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ArrowUpRight,
   CalendarDays,
@@ -24,8 +24,7 @@ import {
 } from "lucide-react";
 import { browserClient } from "@/lib/supabase";
 import { dateBoundary } from "@/lib/dates";
-import { demoData, demoProfile, mutateDemo } from "@/lib/demo";
-import type { Data, Profile, Role, Workshop } from "@/lib/types";
+import type { Data, Profile, Workshop } from "@/lib/types";
 const empty: Data = { workshops: [], registrations: [], users: [], audit: [] };
 const date = (s: string) =>
   new Date(s).toLocaleDateString("en-GB", {
@@ -43,7 +42,6 @@ export default function Home() {
   const [client] = useState(browserClient),
     [profile, setProfile] = useState<Profile | null>(null),
     [data, setData] = useState<Data>(empty),
-    [demo, setDemo] = useState(false),
     [ready, setReady] = useState(false),
     [page, setPage] = useState("Workshops"),
     [search, setSearch] = useState(""),
@@ -60,8 +58,6 @@ export default function Home() {
     [notice, setNotice] = useState(""),
     [loginError, setLoginError] = useState("");
   const [cancelId, setCancelId] = useState<string | null>(null);
-  const dataRef = useRef(data);
-  dataRef.current = data;
   useEffect(() => {
     if (!modal && !selected && !cancelId) return;
     const previous = document.activeElement as HTMLElement;
@@ -140,10 +136,10 @@ export default function Home() {
     };
   }, [client]);
   useEffect(() => {
-    if (!profile || demo) return;
+    if (!profile) return;
     const interval = setInterval(() => reload().catch(() => {}), 15000);
     return () => clearInterval(interval);
-  }, [profile?.id, demo]);
+  }, [profile?.id]);
   useEffect(() => {
     if (!notice) return;
     const timeout = setTimeout(() => setNotice(""), 5000);
@@ -157,24 +153,19 @@ export default function Home() {
     setBusy(true);
     setError("");
     try {
-      if (demo) {
-        const next = mutateDemo(dataRef.current, profile!, path, input);
-        dataRef.current = next;
-        setData(next);
-        sessionStorage.setItem("gather-demo", JSON.stringify(next));
-      } else {
-        const res = await fetch(`/api${path}`, {
-          method,
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${await token()}`,
-          },
-          body: JSON.stringify(input),
-        });
-        const payload = await res.json();
-        if (!res.ok) throw new Error(payload.error);
-        await reload();
-      }
+      const access = await token();
+      if (!access) throw new Error("Your session has expired. Please sign in.");
+      const res = await fetch(`/api${path}`, {
+        method,
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${access}`,
+        },
+        body: JSON.stringify(input),
+      });
+      const payload = await res.json();
+      if (!res.ok) throw new Error(payload.error);
+      await reload();
       setNotice(
         path === "/workshops"
           ? "Workshop saved."
@@ -193,25 +184,16 @@ export default function Home() {
       setBusy(false);
     }
   }
-  function startDemo(role: Role) {
-    let saved: Data | null = null;
-    try {
-      saved = JSON.parse(sessionStorage.getItem("gather-demo") || "null");
-    } catch {}
-    setData(saved || demoData());
-    setProfile(demoProfile(role));
-    setDemo(true);
-    setPage(role === "admin" ? "Team" : "Workshops");
-    setError("");
-    setSelected(null);
-  }
   async function signout() {
-    if (!demo) await client?.auth.signOut();
+    await client?.auth.signOut();
     setProfile(null);
-    setDemo(false);
     setData(empty);
     setError("");
     setSearch("");
+    setSelected(null);
+    setModal(null);
+    setCancelId(null);
+    setNotice("");
   }
   const current = selected
     ? data.workshops.find((w) => w.id === selected.id) || selected
@@ -285,7 +267,7 @@ export default function Home() {
               try {
                 if (!client)
                   throw new Error(
-                    "Supabase connection is pending. You can explore the demo below.",
+                    "Sign-in is unavailable. Please contact your administrator.",
                   );
                 const f = new FormData(e.currentTarget);
                 const { error } = await client.auth.signInWithPassword({
@@ -334,18 +316,6 @@ export default function Home() {
           <div className="admin-note">
             <Shield size={16} />
             Need access? Ask your administrator for an account.
-          </div>
-          <div className="demo-box">
-            <div className="eyebrow">TAKE A LOOK AROUND</div>
-            <p>Explore with sample data. Changes stay in this browser tab.</p>
-            <div className="demo-buttons">
-              {(["manager", "staff", "admin"] as Role[]).map((r) => (
-                <button key={r} onClick={() => startDemo(r)}>
-                  Try {r}
-                  <ArrowUpRight size={14} />
-                </button>
-              ))}
-            </div>
           </div>
           <small>One desk. Every workshop. No overbooked seats.</small>
         </section>
@@ -433,35 +403,17 @@ export default function Home() {
           </span>
           <div>
             <span className="live-dot" />
-            {demo ? "Demo workspace" : "Connected to Supabase"}
+            Staff workspace
             <button
               aria-label="Refresh data"
               onClick={() => {
-                if (!demo) reload().catch((e) => setError(e.message));
-                else setNotice("Demo data is up to date.");
+                reload().catch((e) => setError(e.message));
               }}
             >
               <RefreshCw size={15} />
             </button>
           </div>
         </header>
-        {demo && (
-          <div className="demo-banner">
-            <span>
-              <strong>Demo mode</strong> · Sample data stored in this tab.
-              Production uses Supabase.
-            </span>
-            <select
-              aria-label="Demo role"
-              value={profile.role}
-              onChange={(e) => startDemo(e.target.value as Role)}
-            >
-              <option value="manager">Manager view</option>
-              <option value="staff">Staff view</option>
-              <option value="admin">Admin view</option>
-            </select>
-          </div>
-        )}
         <main className="content">
           <div className="page-heading">
             <div>

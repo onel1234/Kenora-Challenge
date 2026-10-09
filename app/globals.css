@@ -285,21 +285,6 @@ h3 {
   background: #88a16c;
   border-radius: 50%;
 }
-.demo-banner {
-  background: #edf0df;
-  padding: 9px 38px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  color: #748059;
-  font-size: 10px;
-}
-.demo-banner select {
-  padding: 4px 7px;
-  font-size: 10px;
-  background: #f8f9f2;
-  border-color: #dce3cb;
-}
 .content {
   max-width: 1490px;
   margin: auto;
@@ -1279,29 +1264,6 @@ form label small {
   color: #9aa58e;
   margin: 20px 0 35px;
 }
-.demo-box {
-  border-top: 1px solid var(--border);
-  padding-top: 27px;
-}
-.demo-box p {
-  font-size: 10px;
-  color: #9ba58e;
-  line-height: 1.8;
-  margin: 12px 0;
-}
-.demo-buttons {
-  display: flex;
-  gap: 8px;
-}
-.demo-buttons button {
-  border: 1px solid #dce4d2;
-  background: #f0f4e9;
-  color: #7b9365;
-  border-radius: 5px;
-  padding: 9px 10px;
-  font-size: 10px;
-  text-transform: capitalize;
-}
 .login-form > small {
   display: block;
   text-align: center;
@@ -1349,8 +1311,7 @@ form label small {
   .content {
     padding: 28px 25px;
   }
-  .topbar,
-  .demo-banner {
+  .topbar {
     padding-left: 25px;
     padding-right: 25px;
   }
@@ -1455,14 +1416,6 @@ form label small {
   }
   .topbar > div {
     gap: 6px;
-  }
-  .demo-banner {
-    padding: 9px 20px;
-    gap: 10px;
-    line-height: 1.5;
-  }
-  .demo-banner span {
-    max-width: 65%;
   }
   .content {
     padding: 28px 20px 10px;
@@ -1638,9 +1591,6 @@ form label small {
   }
   .login-form h2 {
     font-size: 29px;
-  }
-  .demo-buttons button {
-    flex: 1;
   }
   .toast {
     width: max-content;
