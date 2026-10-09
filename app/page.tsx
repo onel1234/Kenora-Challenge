@@ -1,10 +1,11 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowUpRight,
   CalendarDays,
   Search,
   Plus,
+  Minus,
   MapPin,
   Clock,
   Users,
@@ -19,6 +20,8 @@ import {
   SlidersHorizontal,
   Sprout,
   ChevronRight,
+  ChevronLeft,
+  ChevronDown,
   RefreshCw,
   LoaderCircle,
   Sparkles,
@@ -49,6 +52,706 @@ const initials = (name: string) =>
     .map((n) => n[0])
     .join("")
     .toUpperCase();
+
+function GatherEmblem({ size = 24 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 32 32"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden="true"
+    >
+      {/* Subtle architectural arch halo */}
+      <path
+        d="M6.5 25.5V15.5C6.5 10.2533 10.7533 6 16 6C21.2467 6 25.5 10.2533 25.5 15.5V25.5"
+        stroke="#CBE0B4"
+        strokeOpacity="0.38"
+        strokeWidth="1.25"
+        strokeLinecap="round"
+      />
+      {/* Warm champagne sun/seed orb at apex */}
+      <circle cx="16" cy="9.5" r="2.1" fill="#F5E3BE" />
+      {/* Left sculptural leaf in luminous warm ivory */}
+      <path
+        d="M15.3 22.8C15.3 22.8 15.3 15.6 10.2 12.2C7.8 10.6 5.8 11.2 5.8 13.7C5.8 17.5 9.6 21.8 15.3 22.8Z"
+        fill="#F9FBF6"
+      />
+      {/* Right sculptural leaf in bright sunlit sage-cream */}
+      <path
+        d="M16.7 21.2C16.7 21.2 16.8 14.2 21.8 11.1C24.2 9.6 26.2 10.3 26.2 12.8C26.2 16.5 22.4 20.3 16.7 21.2Z"
+        fill="#DCEAC7"
+      />
+      {/* Central stem & grounding vessel base in warm ivory */}
+      <path
+        d="M16 13.5V25.5M11.5 25.5H20.5"
+        stroke="#F9FBF6"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function GatherLogo() {
+  return (
+    <div className="brand">
+      <div className="brand-mark">
+        <GatherEmblem size={24} />
+      </div>
+      <div className="brand-wordmark">
+        gather<span className="brand-dot">.</span>
+      </div>
+    </div>
+  );
+}
+
+const pad2 = (n: number) => String(n).padStart(2, "0");
+const toLocalIsoDate = (d: Date) =>
+  `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+
+const formatDisplayDate = (isoDate: string, includeWeekday = true) => {
+  if (!isoDate) return "";
+  const [y, m, d] = isoDate.split("-").map(Number);
+  if (!y || !m || !d) return isoDate;
+  const dt = new Date(y, m - 1, d);
+  return dt.toLocaleDateString("en-GB", {
+    ...(includeWeekday ? { weekday: "short" } : {}),
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+};
+
+const format12h = (hhmm: string) => {
+  const [hStr, mStr] = (hhmm || "10:00").split(":");
+  const h = Number(hStr || 10);
+  const m = Number(mStr || 0);
+  const period = h >= 12 ? "PM" : "AM";
+  const h12 = h % 12 || 12;
+  return `${h12}:${pad2(m)} ${period}`;
+};
+
+const buildCalendarCells = (year: number, month: number) => {
+  const first = new Date(year, month, 1);
+  const startOffset = (first.getDay() + 6) % 7; // Monday = 0
+  const todayIso = toLocalIsoDate(new Date());
+  return Array.from({ length: 42 }, (_, idx) => {
+    const cellDate = new Date(year, month, 1 - startOffset + idx);
+    const iso = toLocalIsoDate(cellDate);
+    return {
+      day: cellDate.getDate(),
+      month: cellDate.getMonth(),
+      year: cellDate.getFullYear(),
+      iso,
+      isCurrentMonth: cellDate.getMonth() === month,
+      isToday: iso === todayIso,
+    };
+  });
+};
+
+const STUDIO_TIME_SLOTS = [
+  "09:00",
+  "10:00",
+  "11:00",
+  "13:00",
+  "14:00",
+  "15:30",
+  "17:00",
+  "18:30",
+];
+
+function BotanicalDateTimePicker({ defaultValue }: { defaultValue?: string }) {
+  const initialValue = useMemo(() => {
+    if (defaultValue) return defaultValue;
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    return `${toLocalIsoDate(tomorrow)}T10:00`;
+  }, [defaultValue]);
+
+  const [value, setValue] = useState(initialValue);
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setValue(initialValue);
+  }, [initialValue]);
+
+  const [datePart, timePart] = useMemo(() => {
+    const [d, t] = value.split("T");
+    return [d || toLocalIsoDate(new Date()), (t || "10:00").slice(0, 5)];
+  }, [value]);
+
+  const [viewYear, setViewYear] = useState(() => {
+    const [y] = datePart.split("-").map(Number);
+    return y || new Date().getFullYear();
+  });
+  const [viewMonth, setViewMonth] = useState(() => {
+    const [, m] = datePart.split("-").map(Number);
+    return (m ? m - 1 : new Date().getMonth());
+  });
+
+  useEffect(() => {
+    if (!open) return;
+    requestAnimationFrame(() => {
+      popoverRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    });
+    const onMouseDown = (e: MouseEvent) => {
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(e.target as Node)
+      ) {
+        setOpen(false);
+      }
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onMouseDown);
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => {
+      document.removeEventListener("mousedown", onMouseDown);
+      document.removeEventListener("keydown", onKeyDown, true);
+    };
+  }, [open]);
+
+  const cells = useMemo(
+    () => buildCalendarCells(viewYear, viewMonth),
+    [viewYear, viewMonth],
+  );
+
+  const monthLabel = new Date(viewYear, viewMonth, 1).toLocaleDateString(
+    "en-GB",
+    { month: "long", year: "numeric" },
+  );
+
+  const [hour24, minute] = timePart.split(":").map(Number);
+  const isPM = hour24 >= 12;
+  const hour12 = hour24 % 12 || 12;
+
+  const selectDate = (iso: string, y: number, m: number) => {
+    setValue(`${iso}T${timePart}`);
+    setViewYear(y);
+    setViewMonth(m);
+  };
+
+  const applyPresetOffset = (daysToAdd: number) => {
+    const target = new Date();
+    target.setDate(target.getDate() + daysToAdd);
+    selectDate(
+      toLocalIsoDate(target),
+      target.getFullYear(),
+      target.getMonth(),
+    );
+  };
+
+  const applyNextSaturday = () => {
+    const target = new Date();
+    const diff = (6 - target.getDay() + 7) % 7 || 7;
+    target.setDate(target.getDate() + diff);
+    selectDate(
+      toLocalIsoDate(target),
+      target.getFullYear(),
+      target.getMonth(),
+    );
+  };
+
+  const setTime = (newH: number, newM: number) => {
+    const clampedH = ((newH % 24) + 24) % 24;
+    const clampedM = ((newM % 60) + 60) % 60;
+    setValue(`${datePart}T${pad2(clampedH)}:${pad2(clampedM)}`);
+  };
+
+  const togglePeriod = (wantPM: boolean) => {
+    if (wantPM && hour24 < 12) setTime(hour24 + 12, minute);
+    else if (!wantPM && hour24 >= 12) setTime(hour24 - 12, minute);
+  };
+
+  const stepMonth = (delta: number) => {
+    const next = new Date(viewYear, viewMonth + delta, 1);
+    setViewYear(next.getFullYear());
+    setViewMonth(next.getMonth());
+  };
+
+  return (
+    <div className="dtp-container" ref={containerRef}>
+      <input type="hidden" name="starts_at" value={value} required />
+      <button
+        type="button"
+        className={open ? "dtp-trigger open" : "dtp-trigger"}
+        aria-label="Date and time"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+      >
+        <span className="dtp-trigger-left">
+          <span className="dtp-icon-badge">
+            <CalendarDays size={15} />
+          </span>
+          <span className="dtp-trigger-text">
+            <span className="dtp-trigger-date">
+              {formatDisplayDate(datePart, true)}
+            </span>
+          </span>
+        </span>
+        <span className="dtp-trigger-right">
+          <span className="dtp-time-pill">{format12h(timePart)}</span>
+          <ChevronDown size={15} className="dtp-chevron" />
+        </span>
+      </button>
+
+      {open && (
+        <div
+          ref={popoverRef}
+          className="dtp-popover"
+          role="group"
+          aria-label="Choose workshop date and time"
+        >
+          <div className="dtp-body">
+            <div className="dtp-calendar-col">
+              <div className="dtp-cal-header">
+                <span className="dtp-cal-title">{monthLabel}</span>
+                <div className="dtp-nav-btns">
+                  <button
+                    type="button"
+                    className="dtp-nav-btn"
+                    aria-label="Previous month"
+                    onClick={() => stepMonth(-1)}
+                  >
+                    <ChevronLeft size={15} />
+                  </button>
+                  <button
+                    type="button"
+                    className="dtp-nav-btn"
+                    aria-label="Next month"
+                    onClick={() => stepMonth(1)}
+                  >
+                    <ChevronRight size={15} />
+                  </button>
+                </div>
+              </div>
+
+              <div className="dtp-presets">
+                <button
+                  type="button"
+                  className="dtp-preset-btn"
+                  onClick={() => applyPresetOffset(0)}
+                >
+                  Today
+                </button>
+                <button
+                  type="button"
+                  className="dtp-preset-btn"
+                  onClick={() => applyPresetOffset(1)}
+                >
+                  Tomorrow
+                </button>
+                <button
+                  type="button"
+                  className="dtp-preset-btn"
+                  onClick={applyNextSaturday}
+                >
+                  Next Sat
+                </button>
+                <button
+                  type="button"
+                  className="dtp-preset-btn"
+                  onClick={() => applyPresetOffset(7)}
+                >
+                  +1 Week
+                </button>
+              </div>
+
+              <div className="dtp-weekdays" aria-hidden="true">
+                <span>MO</span>
+                <span>TU</span>
+                <span>WE</span>
+                <span>TH</span>
+                <span>FR</span>
+                <span className="weekend">SA</span>
+                <span className="weekend">SU</span>
+              </div>
+
+              <div className="dtp-days-grid">
+                {cells.map((c) => {
+                  const selected = c.iso === datePart;
+                  return (
+                    <button
+                      type="button"
+                      key={c.iso}
+                      className={`dtp-day${!c.isCurrentMonth ? " outside" : ""}${
+                        c.isToday ? " today" : ""
+                      }${selected ? " selected" : ""}`}
+                      onClick={() => selectDate(c.iso, c.year, c.month)}
+                    >
+                      {c.day}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="dtp-time-col">
+              <div>
+                <div className="dtp-time-header">
+                  <span className="dtp-time-label">Start time</span>
+                  <div className="dtp-ampm-toggle">
+                    <button
+                      type="button"
+                      className={!isPM ? "active" : ""}
+                      onClick={() => togglePeriod(false)}
+                    >
+                      AM
+                    </button>
+                    <button
+                      type="button"
+                      className={isPM ? "active" : ""}
+                      onClick={() => togglePeriod(true)}
+                    >
+                      PM
+                    </button>
+                  </div>
+                </div>
+
+                <div className="dtp-slots-grid">
+                  {STUDIO_TIME_SLOTS.map((slot) => (
+                    <button
+                      type="button"
+                      key={slot}
+                      className={
+                        timePart === slot ? "dtp-slot-btn active" : "dtp-slot-btn"
+                      }
+                      onClick={() => setValue(`${datePart}T${slot}`)}
+                    >
+                      {format12h(slot)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="dtp-fine-time">
+                <div className="dtp-fine-row">
+                  <small>Hour</small>
+                  <div className="dtp-hour-stepper">
+                    <button
+                      type="button"
+                      aria-label="Decrease hour"
+                      onClick={() => setTime(hour24 - 1, minute)}
+                    >
+                      <Minus size={12} />
+                    </button>
+                    <span>{pad2(hour12)}</span>
+                    <button
+                      type="button"
+                      aria-label="Increase hour"
+                      onClick={() => setTime(hour24 + 1, minute)}
+                    >
+                      <Plus size={12} />
+                    </button>
+                  </div>
+                </div>
+                <div className="dtp-minute-pills">
+                  {[0, 15, 30, 45].map((m) => (
+                    <button
+                      type="button"
+                      key={m}
+                      className={
+                        minute === m ? "dtp-min-pill active" : "dtp-min-pill"
+                      }
+                      onClick={() => setTime(hour24, m)}
+                    >
+                      :{pad2(m)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="dtp-footer">
+            <span className="dtp-footer-summary">
+              <Clock size={13} />
+              {formatDisplayDate(datePart, true)} · {format12h(timePart)}
+            </span>
+            <div className="dtp-footer-actions">
+              <button
+                type="button"
+                className="dtp-done-btn"
+                onClick={() => setOpen(false)}
+              >
+                <Check size={13} />
+                Apply schedule
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BotanicalDatePicker({
+  ariaLabel,
+  placeholder,
+  value,
+  min,
+  onChange,
+}: {
+  ariaLabel: string;
+  placeholder: string;
+  value: string;
+  min?: string;
+  onChange: (val: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const [viewYear, setViewYear] = useState(() => {
+    if (value) {
+      const [y] = value.split("-").map(Number);
+      if (y) return y;
+    }
+    return new Date().getFullYear();
+  });
+  const [viewMonth, setViewMonth] = useState(() => {
+    if (value) {
+      const [, m] = value.split("-").map(Number);
+      if (m) return m - 1;
+    }
+    return new Date().getMonth();
+  });
+
+  useEffect(() => {
+    if (!open) return;
+    const onMouseDown = (e: MouseEvent) => {
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(e.target as Node)
+      ) {
+        setOpen(false);
+      }
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onMouseDown);
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => {
+      document.removeEventListener("mousedown", onMouseDown);
+      document.removeEventListener("keydown", onKeyDown, true);
+    };
+  }, [open]);
+
+  const cells = useMemo(
+    () => buildCalendarCells(viewYear, viewMonth),
+    [viewYear, viewMonth],
+  );
+
+  const monthLabel = new Date(viewYear, viewMonth, 1).toLocaleDateString(
+    "en-GB",
+    { month: "long", year: "numeric" },
+  );
+
+  const stepMonth = (delta: number) => {
+    const next = new Date(viewYear, viewMonth + delta, 1);
+    setViewYear(next.getFullYear());
+    setViewMonth(next.getMonth());
+  };
+
+  return (
+    <div className="dtp-container" ref={containerRef} style={{ width: "auto" }}>
+      <button
+        type="button"
+        aria-label={ariaLabel}
+        aria-expanded={open}
+        className={open ? "dtp-trigger open" : "dtp-trigger"}
+        onClick={() => setOpen((o) => !o)}
+      >
+        <span className="dtp-trigger-left">
+          <span className="dtp-icon-badge">
+            <CalendarDays size={13} />
+          </span>
+          {value ? (
+            <span className="dtp-trigger-date">
+              {formatDisplayDate(value, false)}
+            </span>
+          ) : (
+            <span className="dtp-trigger-placeholder">{placeholder}</span>
+          )}
+        </span>
+        <ChevronDown size={13} className="dtp-chevron" />
+      </button>
+
+      {open && (
+        <div className="dtp-popover single-col">
+          <div className="dtp-body">
+            <div className="dtp-calendar-col">
+              <div className="dtp-cal-header">
+                <span className="dtp-cal-title">{monthLabel}</span>
+                <div className="dtp-nav-btns">
+                  <button
+                    type="button"
+                    className="dtp-nav-btn"
+                    aria-label="Previous month"
+                    onClick={() => stepMonth(-1)}
+                  >
+                    <ChevronLeft size={14} />
+                  </button>
+                  <button
+                    type="button"
+                    className="dtp-nav-btn"
+                    aria-label="Next month"
+                    onClick={() => stepMonth(1)}
+                  >
+                    <ChevronRight size={14} />
+                  </button>
+                </div>
+              </div>
+
+              <div className="dtp-weekdays" aria-hidden="true">
+                <span>MO</span>
+                <span>TU</span>
+                <span>WE</span>
+                <span>TH</span>
+                <span>FR</span>
+                <span className="weekend">SA</span>
+                <span className="weekend">SU</span>
+              </div>
+
+              <div className="dtp-days-grid">
+                {cells.map((c) => {
+                  const selected = c.iso === value;
+                  const disabled = Boolean(min && c.iso < min);
+                  return (
+                    <button
+                      type="button"
+                      key={c.iso}
+                      disabled={disabled}
+                      className={`dtp-day${!c.isCurrentMonth ? " outside" : ""}${
+                        c.isToday ? " today" : ""
+                      }${selected ? " selected" : ""}`}
+                      onClick={() => {
+                        onChange(c.iso);
+                        setViewYear(c.year);
+                        setViewMonth(c.month);
+                        setOpen(false);
+                      }}
+                    >
+                      {c.day}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+          <div className="dtp-footer">
+            <button
+              type="button"
+              className="dtp-clear-btn"
+              onClick={() => {
+                onChange("");
+                setOpen(false);
+              }}
+            >
+              Clear
+            </button>
+            <button
+              type="button"
+              className="dtp-done-btn"
+              onClick={() => {
+                const today = toLocalIsoDate(new Date());
+                if (!min || today >= min) onChange(today);
+                setOpen(false);
+              }}
+            >
+              Today
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BotanicalNumberStepper({
+  name,
+  defaultValue,
+  min,
+  max,
+  step = 1,
+  presets,
+}: {
+  name: string;
+  defaultValue: number;
+  min: number;
+  max: number;
+  step?: number;
+  presets?: number[];
+}) {
+  const [val, setVal] = useState(defaultValue);
+  useEffect(() => {
+    setVal(defaultValue);
+  }, [defaultValue]);
+
+  const adjust = (delta: number) => {
+    setVal((prev) => Math.min(max, Math.max(min, (Number(prev) || min) + delta)));
+  };
+
+  return (
+    <div>
+      <div className="stepper-field">
+        <button
+          type="button"
+          className="stepper-btn"
+          aria-label={`Decrease ${name}`}
+          disabled={val <= min}
+          onClick={() => adjust(-step)}
+        >
+          <Minus size={14} />
+        </button>
+        <input
+          name={name}
+          type="number"
+          required
+          min={min}
+          max={max}
+          value={val}
+          onChange={(e) => setVal(Number(e.target.value))}
+        />
+        <button
+          type="button"
+          className="stepper-btn"
+          aria-label={`Increase ${name}`}
+          disabled={val >= max}
+          onClick={() => adjust(step)}
+        >
+          <Plus size={14} />
+        </button>
+      </div>
+      {presets && (
+        <div className="duration-chips">
+          {presets.map((p) => (
+            <button
+              type="button"
+              key={p}
+              className={val === p ? "duration-chip active" : "duration-chip"}
+              onClick={() => setVal(p)}
+            >
+              {p}m
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function Home() {
   const [client] = useState(browserClient),
@@ -252,9 +955,9 @@ export default function Home() {
   if (!ready)
     return (
       <main className="loading">
-        <span className="brand-mark">
-          <Sprout size={22} />
-        </span>
+        <div className="brand-mark brand-mark-lg">
+          <GatherEmblem size={30} />
+        </div>
         <p>Opening your workshop desk…</p>
       </main>
     );
@@ -264,14 +967,7 @@ export default function Home() {
       <main className="login-page">
         <section className="login-story">
           <div className="login-story-top">
-            <div className="brand">
-              <span className="brand-mark">
-                <Sprout size={20} />
-              </span>
-              <span>
-                gather<span className="brand-dot">.</span>
-              </span>
-            </div>
+            <GatherLogo />
             <span className="edition-pill">EDITION 04 · WORKSHOP DESK</span>
           </div>
           <div className="story-copy">
@@ -421,17 +1117,9 @@ export default function Home() {
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        <div className="brand">
-          <span className="brand-mark">
-            <Sprout size={19} />
-          </span>
-          <span>
-            gather<span className="brand-dot">.</span>
-          </span>
-        </div>
+        <GatherLogo />
         <div className="workspace-label">
           <span>COMMUNITY WORKSHOP DESK</span>
-          <span className="workspace-edition">DESK</span>
         </div>
         <nav>
           {(operational
@@ -771,26 +1459,26 @@ export default function Home() {
                   </button>
                 </div>
                 <div className="date-filters">
-                  <label>
-                    From{" "}
-                    <input
-                      type="date"
-                      aria-label="From date"
+                  <div className="date-filter-item">
+                    <span>From</span>
+                    <BotanicalDatePicker
+                      ariaLabel="From date"
+                      placeholder="Start date"
                       value={from}
-                      onChange={(e) => setFrom(e.target.value)}
+                      onChange={setFrom}
                     />
-                  </label>
+                  </div>
                   <span>—</span>
-                  <label>
-                    To{" "}
-                    <input
-                      type="date"
-                      aria-label="To date"
+                  <div className="date-filter-item">
+                    <span>To</span>
+                    <BotanicalDatePicker
+                      ariaLabel="To date"
+                      placeholder="End date"
                       value={to}
                       min={from}
-                      onChange={(e) => setTo(e.target.value)}
+                      onChange={setTo}
                     />
-                  </label>
+                  </div>
                   {(from ||
                     to ||
                     available ||
@@ -1542,13 +2230,10 @@ export default function Home() {
                       defaultValue={editing?.instructor}
                     />
                   </label>
-                  <div className="form-row">
-                    <label>
-                      Date & time
-                      <input
-                        name="starts_at"
-                        type="datetime-local"
-                        required
+                  <div className="form-row form-row-datetime">
+                    <div className="field-group">
+                      <span className="field-label">Date & time</span>
+                      <BotanicalDateTimePicker
                         defaultValue={
                           editing
                             ? new Date(
@@ -1563,31 +2248,30 @@ export default function Home() {
                             : ""
                         }
                       />
-                    </label>
-                    <label>
-                      Duration (minutes)
-                      <input
+                    </div>
+                    <div className="field-group">
+                      <span className="field-label">Duration (minutes)</span>
+                      <BotanicalNumberStepper
                         name="duration_minutes"
-                        type="number"
-                        required
                         min={15}
                         max={720}
+                        step={15}
                         defaultValue={editing?.duration_minutes || 90}
+                        presets={[60, 90, 120, 180]}
                       />
-                    </label>
+                    </div>
                   </div>
                   <div className="form-row">
-                    <label>
-                      Capacity
-                      <input
+                    <div className="field-group">
+                      <span className="field-label">Capacity</span>
+                      <BotanicalNumberStepper
                         name="capacity"
-                        type="number"
-                        required
                         min={editing?.active_count || 1}
                         max={1000}
+                        step={1}
                         defaultValue={editing?.capacity || 12}
                       />
-                    </label>
+                    </div>
                     <label>
                       Status
                       <select
