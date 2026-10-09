@@ -1,10 +1,11 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowUpRight,
   CalendarDays,
   Search,
   Plus,
+  Minus,
   MapPin,
   Clock,
   Users,
@@ -19,12 +20,17 @@ import {
   SlidersHorizontal,
   Sprout,
   ChevronRight,
+  ChevronLeft,
+  ChevronDown,
   RefreshCw,
   LoaderCircle,
+  Sparkles,
+  Rows3,
 } from "lucide-react";
 import { browserClient } from "@/lib/supabase";
 import { dateBoundary } from "@/lib/dates";
 import type { Data, Profile, Workshop } from "@/lib/types";
+
 const empty: Data = { workshops: [], registrations: [], users: [], audit: [] };
 const date = (s: string) =>
   new Date(s).toLocaleDateString("en-GB", {
@@ -38,6 +44,715 @@ const time = (s: string) =>
     minute: "2-digit",
   });
 const human = (s: string) => s.replaceAll("_", " ");
+const initials = (name: string) =>
+  name
+    .split(" ")
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((n) => n[0])
+    .join("")
+    .toUpperCase();
+
+function GatherEmblem({ size = 24 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 32 32"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden="true"
+    >
+      {/* Subtle architectural arch halo */}
+      <path
+        d="M6.5 25.5V15.5C6.5 10.2533 10.7533 6 16 6C21.2467 6 25.5 10.2533 25.5 15.5V25.5"
+        stroke="#CBE0B4"
+        strokeOpacity="0.38"
+        strokeWidth="1.25"
+        strokeLinecap="round"
+      />
+      {/* Warm champagne sun/seed orb at apex */}
+      <circle cx="16" cy="9.5" r="2.1" fill="#F5E3BE" />
+      {/* Left sculptural leaf in luminous warm ivory */}
+      <path
+        d="M15.3 22.8C15.3 22.8 15.3 15.6 10.2 12.2C7.8 10.6 5.8 11.2 5.8 13.7C5.8 17.5 9.6 21.8 15.3 22.8Z"
+        fill="#F9FBF6"
+      />
+      {/* Right sculptural leaf in bright sunlit sage-cream */}
+      <path
+        d="M16.7 21.2C16.7 21.2 16.8 14.2 21.8 11.1C24.2 9.6 26.2 10.3 26.2 12.8C26.2 16.5 22.4 20.3 16.7 21.2Z"
+        fill="#DCEAC7"
+      />
+      {/* Central stem & grounding vessel base in warm ivory */}
+      <path
+        d="M16 13.5V25.5M11.5 25.5H20.5"
+        stroke="#F9FBF6"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function GatherLogo() {
+  return (
+    <div className="brand">
+      <div className="brand-mark">
+        <GatherEmblem size={24} />
+      </div>
+      <div className="brand-wordmark">
+        gather<span className="brand-dot">.</span>
+      </div>
+    </div>
+  );
+}
+
+const pad2 = (n: number) => String(n).padStart(2, "0");
+const toLocalIsoDate = (d: Date) =>
+  `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+
+const formatDisplayDate = (isoDate: string, includeWeekday = true) => {
+  if (!isoDate) return "";
+  const [y, m, d] = isoDate.split("-").map(Number);
+  if (!y || !m || !d) return isoDate;
+  const dt = new Date(y, m - 1, d);
+  return dt.toLocaleDateString("en-GB", {
+    ...(includeWeekday ? { weekday: "short" } : {}),
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+};
+
+const format12h = (hhmm: string) => {
+  const [hStr, mStr] = (hhmm || "10:00").split(":");
+  const h = Number(hStr || 10);
+  const m = Number(mStr || 0);
+  const period = h >= 12 ? "PM" : "AM";
+  const h12 = h % 12 || 12;
+  return `${h12}:${pad2(m)} ${period}`;
+};
+
+const buildCalendarCells = (year: number, month: number) => {
+  const first = new Date(year, month, 1);
+  const startOffset = (first.getDay() + 6) % 7; // Monday = 0
+  const todayIso = toLocalIsoDate(new Date());
+  return Array.from({ length: 42 }, (_, idx) => {
+    const cellDate = new Date(year, month, 1 - startOffset + idx);
+    const iso = toLocalIsoDate(cellDate);
+    return {
+      day: cellDate.getDate(),
+      month: cellDate.getMonth(),
+      year: cellDate.getFullYear(),
+      iso,
+      isCurrentMonth: cellDate.getMonth() === month,
+      isToday: iso === todayIso,
+    };
+  });
+};
+
+const STUDIO_TIME_SLOTS = [
+  "09:00",
+  "10:00",
+  "11:00",
+  "13:00",
+  "14:00",
+  "15:30",
+  "17:00",
+  "18:30",
+];
+
+function BotanicalDateTimePicker({ defaultValue }: { defaultValue?: string }) {
+  const initialValue = useMemo(() => {
+    if (defaultValue) return defaultValue;
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    return `${toLocalIsoDate(tomorrow)}T10:00`;
+  }, [defaultValue]);
+
+  const [value, setValue] = useState(initialValue);
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setValue(initialValue);
+  }, [initialValue]);
+
+  const [datePart, timePart] = useMemo(() => {
+    const [d, t] = value.split("T");
+    return [d || toLocalIsoDate(new Date()), (t || "10:00").slice(0, 5)];
+  }, [value]);
+
+  const [viewYear, setViewYear] = useState(() => {
+    const [y] = datePart.split("-").map(Number);
+    return y || new Date().getFullYear();
+  });
+  const [viewMonth, setViewMonth] = useState(() => {
+    const [, m] = datePart.split("-").map(Number);
+    return (m ? m - 1 : new Date().getMonth());
+  });
+
+  useEffect(() => {
+    if (!open) return;
+    requestAnimationFrame(() => {
+      popoverRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    });
+    const onMouseDown = (e: MouseEvent) => {
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(e.target as Node)
+      ) {
+        setOpen(false);
+      }
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onMouseDown);
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => {
+      document.removeEventListener("mousedown", onMouseDown);
+      document.removeEventListener("keydown", onKeyDown, true);
+    };
+  }, [open]);
+
+  const cells = useMemo(
+    () => buildCalendarCells(viewYear, viewMonth),
+    [viewYear, viewMonth],
+  );
+
+  const monthLabel = new Date(viewYear, viewMonth, 1).toLocaleDateString(
+    "en-GB",
+    { month: "long", year: "numeric" },
+  );
+
+  const [hour24, minute] = timePart.split(":").map(Number);
+  const isPM = hour24 >= 12;
+  const hour12 = hour24 % 12 || 12;
+
+  const selectDate = (iso: string, y: number, m: number) => {
+    setValue(`${iso}T${timePart}`);
+    setViewYear(y);
+    setViewMonth(m);
+  };
+
+  const applyPresetOffset = (daysToAdd: number) => {
+    const target = new Date();
+    target.setDate(target.getDate() + daysToAdd);
+    selectDate(
+      toLocalIsoDate(target),
+      target.getFullYear(),
+      target.getMonth(),
+    );
+  };
+
+  const applyNextSaturday = () => {
+    const target = new Date();
+    const diff = (6 - target.getDay() + 7) % 7 || 7;
+    target.setDate(target.getDate() + diff);
+    selectDate(
+      toLocalIsoDate(target),
+      target.getFullYear(),
+      target.getMonth(),
+    );
+  };
+
+  const setTime = (newH: number, newM: number) => {
+    const clampedH = ((newH % 24) + 24) % 24;
+    const clampedM = ((newM % 60) + 60) % 60;
+    setValue(`${datePart}T${pad2(clampedH)}:${pad2(clampedM)}`);
+  };
+
+  const togglePeriod = (wantPM: boolean) => {
+    if (wantPM && hour24 < 12) setTime(hour24 + 12, minute);
+    else if (!wantPM && hour24 >= 12) setTime(hour24 - 12, minute);
+  };
+
+  const stepMonth = (delta: number) => {
+    const next = new Date(viewYear, viewMonth + delta, 1);
+    setViewYear(next.getFullYear());
+    setViewMonth(next.getMonth());
+  };
+
+  return (
+    <div className="dtp-container" ref={containerRef}>
+      <input type="hidden" name="starts_at" value={value} required />
+      <button
+        type="button"
+        className={open ? "dtp-trigger open" : "dtp-trigger"}
+        aria-label="Date and time"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+      >
+        <span className="dtp-trigger-left">
+          <span className="dtp-icon-badge">
+            <CalendarDays size={15} />
+          </span>
+          <span className="dtp-trigger-text">
+            <span className="dtp-trigger-date">
+              {formatDisplayDate(datePart, true)}
+            </span>
+          </span>
+        </span>
+        <span className="dtp-trigger-right">
+          <span className="dtp-time-pill">{format12h(timePart)}</span>
+          <ChevronDown size={15} className="dtp-chevron" />
+        </span>
+      </button>
+
+      {open && (
+        <div
+          ref={popoverRef}
+          className="dtp-popover"
+          role="group"
+          aria-label="Choose workshop date and time"
+        >
+          <div className="dtp-body">
+            <div className="dtp-calendar-col">
+              <div className="dtp-cal-header">
+                <span className="dtp-cal-title">{monthLabel}</span>
+                <div className="dtp-nav-btns">
+                  <button
+                    type="button"
+                    className="dtp-nav-btn"
+                    aria-label="Previous month"
+                    onClick={() => stepMonth(-1)}
+                  >
+                    <ChevronLeft size={15} />
+                  </button>
+                  <button
+                    type="button"
+                    className="dtp-nav-btn"
+                    aria-label="Next month"
+                    onClick={() => stepMonth(1)}
+                  >
+                    <ChevronRight size={15} />
+                  </button>
+                </div>
+              </div>
+
+              <div className="dtp-presets">
+                <button
+                  type="button"
+                  className="dtp-preset-btn"
+                  onClick={() => applyPresetOffset(0)}
+                >
+                  Today
+                </button>
+                <button
+                  type="button"
+                  className="dtp-preset-btn"
+                  onClick={() => applyPresetOffset(1)}
+                >
+                  Tomorrow
+                </button>
+                <button
+                  type="button"
+                  className="dtp-preset-btn"
+                  onClick={applyNextSaturday}
+                >
+                  Next Sat
+                </button>
+                <button
+                  type="button"
+                  className="dtp-preset-btn"
+                  onClick={() => applyPresetOffset(7)}
+                >
+                  +1 Week
+                </button>
+              </div>
+
+              <div className="dtp-weekdays" aria-hidden="true">
+                <span>MO</span>
+                <span>TU</span>
+                <span>WE</span>
+                <span>TH</span>
+                <span>FR</span>
+                <span className="weekend">SA</span>
+                <span className="weekend">SU</span>
+              </div>
+
+              <div className="dtp-days-grid">
+                {cells.map((c) => {
+                  const selected = c.iso === datePart;
+                  return (
+                    <button
+                      type="button"
+                      key={c.iso}
+                      className={`dtp-day${!c.isCurrentMonth ? " outside" : ""}${
+                        c.isToday ? " today" : ""
+                      }${selected ? " selected" : ""}`}
+                      onClick={() => selectDate(c.iso, c.year, c.month)}
+                    >
+                      {c.day}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="dtp-time-col">
+              <div>
+                <div className="dtp-time-header">
+                  <span className="dtp-time-label">Start time</span>
+                  <div className="dtp-ampm-toggle">
+                    <button
+                      type="button"
+                      className={!isPM ? "active" : ""}
+                      onClick={() => togglePeriod(false)}
+                    >
+                      AM
+                    </button>
+                    <button
+                      type="button"
+                      className={isPM ? "active" : ""}
+                      onClick={() => togglePeriod(true)}
+                    >
+                      PM
+                    </button>
+                  </div>
+                </div>
+
+                <div className="dtp-slots-grid">
+                  {STUDIO_TIME_SLOTS.map((slot) => (
+                    <button
+                      type="button"
+                      key={slot}
+                      className={
+                        timePart === slot ? "dtp-slot-btn active" : "dtp-slot-btn"
+                      }
+                      onClick={() => setValue(`${datePart}T${slot}`)}
+                    >
+                      {format12h(slot)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="dtp-fine-time">
+                <div className="dtp-fine-row">
+                  <small>Hour</small>
+                  <div className="dtp-hour-stepper">
+                    <button
+                      type="button"
+                      aria-label="Decrease hour"
+                      onClick={() => setTime(hour24 - 1, minute)}
+                    >
+                      <Minus size={12} />
+                    </button>
+                    <span>{pad2(hour12)}</span>
+                    <button
+                      type="button"
+                      aria-label="Increase hour"
+                      onClick={() => setTime(hour24 + 1, minute)}
+                    >
+                      <Plus size={12} />
+                    </button>
+                  </div>
+                </div>
+                <div className="dtp-minute-pills">
+                  {[0, 15, 30, 45].map((m) => (
+                    <button
+                      type="button"
+                      key={m}
+                      className={
+                        minute === m ? "dtp-min-pill active" : "dtp-min-pill"
+                      }
+                      onClick={() => setTime(hour24, m)}
+                    >
+                      :{pad2(m)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="dtp-footer">
+            <span className="dtp-footer-summary">
+              <Clock size={13} />
+              {formatDisplayDate(datePart, true)} · {format12h(timePart)}
+            </span>
+            <div className="dtp-footer-actions">
+              <button
+                type="button"
+                className="dtp-done-btn"
+                onClick={() => setOpen(false)}
+              >
+                <Check size={13} />
+                Apply schedule
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BotanicalDatePicker({
+  ariaLabel,
+  placeholder,
+  value,
+  min,
+  onChange,
+}: {
+  ariaLabel: string;
+  placeholder: string;
+  value: string;
+  min?: string;
+  onChange: (val: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const [viewYear, setViewYear] = useState(() => {
+    if (value) {
+      const [y] = value.split("-").map(Number);
+      if (y) return y;
+    }
+    return new Date().getFullYear();
+  });
+  const [viewMonth, setViewMonth] = useState(() => {
+    if (value) {
+      const [, m] = value.split("-").map(Number);
+      if (m) return m - 1;
+    }
+    return new Date().getMonth();
+  });
+
+  useEffect(() => {
+    if (!open) return;
+    const onMouseDown = (e: MouseEvent) => {
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(e.target as Node)
+      ) {
+        setOpen(false);
+      }
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onMouseDown);
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => {
+      document.removeEventListener("mousedown", onMouseDown);
+      document.removeEventListener("keydown", onKeyDown, true);
+    };
+  }, [open]);
+
+  const cells = useMemo(
+    () => buildCalendarCells(viewYear, viewMonth),
+    [viewYear, viewMonth],
+  );
+
+  const monthLabel = new Date(viewYear, viewMonth, 1).toLocaleDateString(
+    "en-GB",
+    { month: "long", year: "numeric" },
+  );
+
+  const stepMonth = (delta: number) => {
+    const next = new Date(viewYear, viewMonth + delta, 1);
+    setViewYear(next.getFullYear());
+    setViewMonth(next.getMonth());
+  };
+
+  return (
+    <div className="dtp-container" ref={containerRef} style={{ width: "auto" }}>
+      <button
+        type="button"
+        aria-label={ariaLabel}
+        aria-expanded={open}
+        className={open ? "dtp-trigger open" : "dtp-trigger"}
+        onClick={() => setOpen((o) => !o)}
+      >
+        <span className="dtp-trigger-left">
+          <span className="dtp-icon-badge">
+            <CalendarDays size={13} />
+          </span>
+          {value ? (
+            <span className="dtp-trigger-date">
+              {formatDisplayDate(value, false)}
+            </span>
+          ) : (
+            <span className="dtp-trigger-placeholder">{placeholder}</span>
+          )}
+        </span>
+        <ChevronDown size={13} className="dtp-chevron" />
+      </button>
+
+      {open && (
+        <div className="dtp-popover single-col">
+          <div className="dtp-body">
+            <div className="dtp-calendar-col">
+              <div className="dtp-cal-header">
+                <span className="dtp-cal-title">{monthLabel}</span>
+                <div className="dtp-nav-btns">
+                  <button
+                    type="button"
+                    className="dtp-nav-btn"
+                    aria-label="Previous month"
+                    onClick={() => stepMonth(-1)}
+                  >
+                    <ChevronLeft size={14} />
+                  </button>
+                  <button
+                    type="button"
+                    className="dtp-nav-btn"
+                    aria-label="Next month"
+                    onClick={() => stepMonth(1)}
+                  >
+                    <ChevronRight size={14} />
+                  </button>
+                </div>
+              </div>
+
+              <div className="dtp-weekdays" aria-hidden="true">
+                <span>MO</span>
+                <span>TU</span>
+                <span>WE</span>
+                <span>TH</span>
+                <span>FR</span>
+                <span className="weekend">SA</span>
+                <span className="weekend">SU</span>
+              </div>
+
+              <div className="dtp-days-grid">
+                {cells.map((c) => {
+                  const selected = c.iso === value;
+                  const disabled = Boolean(min && c.iso < min);
+                  return (
+                    <button
+                      type="button"
+                      key={c.iso}
+                      disabled={disabled}
+                      className={`dtp-day${!c.isCurrentMonth ? " outside" : ""}${
+                        c.isToday ? " today" : ""
+                      }${selected ? " selected" : ""}`}
+                      onClick={() => {
+                        onChange(c.iso);
+                        setViewYear(c.year);
+                        setViewMonth(c.month);
+                        setOpen(false);
+                      }}
+                    >
+                      {c.day}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+          <div className="dtp-footer">
+            <button
+              type="button"
+              className="dtp-clear-btn"
+              onClick={() => {
+                onChange("");
+                setOpen(false);
+              }}
+            >
+              Clear
+            </button>
+            <button
+              type="button"
+              className="dtp-done-btn"
+              onClick={() => {
+                const today = toLocalIsoDate(new Date());
+                if (!min || today >= min) onChange(today);
+                setOpen(false);
+              }}
+            >
+              Today
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BotanicalNumberStepper({
+  name,
+  defaultValue,
+  min,
+  max,
+  step = 1,
+  presets,
+}: {
+  name: string;
+  defaultValue: number;
+  min: number;
+  max: number;
+  step?: number;
+  presets?: number[];
+}) {
+  const [val, setVal] = useState(defaultValue);
+  useEffect(() => {
+    setVal(defaultValue);
+  }, [defaultValue]);
+
+  const adjust = (delta: number) => {
+    setVal((prev) => Math.min(max, Math.max(min, (Number(prev) || min) + delta)));
+  };
+
+  return (
+    <div>
+      <div className="stepper-field">
+        <button
+          type="button"
+          className="stepper-btn"
+          aria-label={`Decrease ${name}`}
+          disabled={val <= min}
+          onClick={() => adjust(-step)}
+        >
+          <Minus size={14} />
+        </button>
+        <input
+          name={name}
+          type="number"
+          required
+          min={min}
+          max={max}
+          value={val}
+          onChange={(e) => setVal(Number(e.target.value))}
+        />
+        <button
+          type="button"
+          className="stepper-btn"
+          aria-label={`Increase ${name}`}
+          disabled={val >= max}
+          onClick={() => adjust(step)}
+        >
+          <Plus size={14} />
+        </button>
+      </div>
+      {presets && (
+        <div className="duration-chips">
+          {presets.map((p) => (
+            <button
+              type="button"
+              key={p}
+              className={val === p ? "duration-chip active" : "duration-chip"}
+              onClick={() => setVal(p)}
+            >
+              {p}m
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Home() {
   const [client] = useState(browserClient),
     [profile, setProfile] = useState<Profile | null>(null),
@@ -47,6 +762,9 @@ export default function Home() {
     [search, setSearch] = useState(""),
     [status, setStatus] = useState("all"),
     [location, setLocation] = useState("all"),
+    [categoryFilter, setCategoryFilter] = useState("all"),
+    [viewMode, setViewMode] = useState<"grid" | "list">("grid"),
+    [regStatusFilter, setRegStatusFilter] = useState<"all" | "active" | "cancelled">("all"),
     [available, setAvailable] = useState(false),
     [from, setFrom] = useState(""),
     [to, setTo] = useState(""),
@@ -58,6 +776,7 @@ export default function Home() {
     [notice, setNotice] = useState(""),
     [loginError, setLoginError] = useState("");
   const [cancelId, setCancelId] = useState<string | null>(null);
+
   useEffect(() => {
     if (!modal && !selected && !cancelId) return;
     const previous = document.activeElement as HTMLElement;
@@ -94,16 +813,19 @@ export default function Home() {
       previous?.focus();
     };
   }, [modal, selected?.id, cancelId, busy]);
+
   useEffect(() => {
     if (profile?.role === "admin" && !["Team", "Activity"].includes(page))
       setPage("Team");
     if (profile && profile.role !== "admin" && page === "Team")
       setPage("Workshops");
   }, [profile?.role, page]);
+
   async function token() {
     const s = await client?.auth.getSession();
     return s?.data.session?.access_token;
   }
+
   async function reload() {
     if (!client) return;
     const access = await token();
@@ -116,6 +838,7 @@ export default function Home() {
     setProfile(payload.profile);
     setData(payload);
   }
+
   useEffect(() => {
     let mounted = true;
     if (!client) {
@@ -135,16 +858,19 @@ export default function Home() {
       mounted = false;
     };
   }, [client]);
+
   useEffect(() => {
     if (!profile) return;
     const interval = setInterval(() => reload().catch(() => {}), 15000);
     return () => clearInterval(interval);
   }, [profile?.id]);
+
   useEffect(() => {
     if (!notice) return;
     const timeout = setTimeout(() => setNotice(""), 5000);
     return () => clearTimeout(timeout);
   }, [notice]);
+
   async function mutate(
     path: string,
     input: Record<string, unknown>,
@@ -184,6 +910,7 @@ export default function Home() {
       setBusy(false);
     }
   }
+
   async function signout() {
     await client?.auth.signOut();
     setProfile(null);
@@ -195,9 +922,16 @@ export default function Home() {
     setCancelId(null);
     setNotice("");
   }
+
   const current = selected
     ? data.workshops.find((w) => w.id === selected.id) || selected
     : null;
+
+  const categories = useMemo(
+    () => Array.from(new Set(data.workshops.map((w) => w.category))),
+    [data.workshops],
+  );
+
   const filtered = useMemo(
     () =>
       data.workshops.filter(
@@ -207,6 +941,7 @@ export default function Home() {
             .includes(search.toLowerCase()) &&
           (status === "all" || w.status === status) &&
           (location === "all" || w.location === location) &&
+          (categoryFilter === "all" || w.category === categoryFilter) &&
           (!available ||
             (w.capacity > w.active_count &&
               w.status === "scheduled" &&
@@ -214,51 +949,77 @@ export default function Home() {
           (!from || w.starts_at >= dateBoundary(from)) &&
           (!to || w.starts_at < dateBoundary(to, true)),
       ),
-    [data.workshops, search, status, location, available, from, to],
+    [data.workshops, search, status, location, categoryFilter, available, from, to],
   );
+
   if (!ready)
     return (
       <main className="loading">
-        <Sprout size={36} />
+        <div className="brand-mark brand-mark-lg">
+          <GatherEmblem size={30} />
+        </div>
         <p>Opening your workshop desk…</p>
       </main>
     );
+
   if (!profile)
     return (
       <main className="login-page">
         <section className="login-story">
-          <div className="brand">
-            <Sprout />
-            <span>
-              gather<span className="brand-dot">.</span>
-            </span>
+          <div className="login-story-top">
+            <GatherLogo />
+            <span className="edition-pill">EDITION 04 · WORKSHOP DESK</span>
           </div>
           <div className="story-copy">
             <div className="eyebrow">SPACE FOR SOMETHING NEW</div>
             <h1>
               Good things happen
               <br />
-              when we gather.
+              when we <em className="editorial-italic">gather.</em>
             </h1>
             <p>
               A little creativity. A new skill. A shared experience.
               <br />
               Give your community more room to grow.
             </p>
-            <div className="abstract-art">
+            <div className="abstract-art" aria-hidden="true">
               <span className="arch arch-one" />
               <span className="arch arch-two" />
               <span className="art-circle" />
               <span className="art-line" />
               <Sprout size={125} />
+              <div className="story-floating-card card-one">
+                <span className="stat-icon" style={{ width: 34, height: 34, borderRadius: 9 }}>
+                  <Sparkles size={16} />
+                </span>
+                <div>
+                  <strong>Ceramic Handbuilding</strong>
+                  <small>POT-104 · 12 / 12 seats confirmed</small>
+                </div>
+              </div>
+              <div className="story-floating-card card-two">
+                <span className="live-dot" />
+                <div>
+                  <strong>Botanical Dyeing Studio</strong>
+                  <small>Central Studio · 4 seats open</small>
+                </div>
+              </div>
             </div>
           </div>
-          <footer>Community workshops, thoughtfully organised.</footer>
+          <footer>
+            <span>Community workshops, thoughtfully organised.</span>
+            <div className="story-pillars">
+              <span>01 / REALTIME CAPACITY</span>
+              <span>02 / ZERO OVERBOOKING</span>
+            </div>
+          </footer>
         </section>
         <section className="login-form">
           <div className="eyebrow">YOUR COMMUNITY. CONNECTED.</div>
-          <h2>Welcome to the desk.</h2>
-          <p>Sign in to manage your community’s workshops.</p>
+          <h2>
+            Welcome to the <em className="editorial-italic">desk.</em>
+          </h2>
+          <p>Sign in to manage your community’s workshops, seats, and roster.</p>
           <form
             onSubmit={async (e) => {
               e.preventDefault();
@@ -321,34 +1082,57 @@ export default function Home() {
         </section>
       </main>
     );
+
   const operational = profile.role !== "admin";
   const active = data.workshops.filter(
     (w) => w.status === "scheduled" && new Date(w.starts_at) > new Date(),
   );
   const total = active.reduce((n, w) => n + w.active_count, 0),
-    seats = active.reduce((n, w) => n + w.capacity - w.active_count, 0);
+    seats = active.reduce((n, w) => n + w.capacity - w.active_count, 0),
+    totalCapacity = total + seats,
+    occupancyRate = totalCapacity > 0 ? Math.round((total / totalCapacity) * 100) : 0;
+
+  const auditFiltered = data.audit.filter((a) =>
+    operational
+      ? !["account_created", "role_changed"].includes(a.action)
+      : ["account_created", "role_changed"].includes(a.action),
+  );
+
+  const filteredRegistrations = data.registrations.filter(
+    (r) =>
+      (regStatusFilter === "all" || r.status === regStatusFilter) &&
+      (
+        r.attendee_name +
+        " " +
+        r.attendee_email +
+        " " +
+        (data.workshops.find((w) => w.id === r.workshop_id)?.title || "") +
+        " " +
+        (data.workshops.find((w) => w.id === r.workshop_id)?.code || "")
+      )
+        .toLowerCase()
+        .includes(search.toLowerCase()),
+  );
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        <div className="brand">
-          <Sprout />
-          <span>
-            gather<span className="brand-dot">.</span>
-          </span>
+        <GatherLogo />
+        <div className="workspace-label">
+          <span>COMMUNITY WORKSHOP DESK</span>
         </div>
-        <div className="workspace-label">COMMUNITY WORKSHOP DESK</div>
         <nav>
           {(operational
             ? [
-                ["Workshops", LayoutGrid],
-                ["Registrations", ClipboardList],
-                ["Activity", History],
+                ["Workshops", LayoutGrid, data.workshops.length],
+                ["Registrations", ClipboardList, data.registrations.length],
+                ["Activity", History, auditFiltered.length],
               ]
             : [
-                ["Team", Users],
-                ["Activity", History],
+                ["Team", Users, data.users.length],
+                ["Activity", History, auditFiltered.length],
               ]
-          ).map(([label, Icon]) => {
+          ).map(([label, Icon, count]) => {
             const NavIcon = Icon as typeof Users;
             return (
               <button
@@ -360,9 +1144,9 @@ export default function Home() {
                   setError("");
                 }}
               >
-                <NavIcon size={19} />
+                <NavIcon size={18} />
                 {String(label)}
-                {label === "Workshops" && <span>{data.workshops.length}</span>}
+                <span>{Number(count)}</span>
               </button>
             );
           })}
@@ -370,7 +1154,7 @@ export default function Home() {
         <div className="sidebar-bottom">
           <div className="help-card">
             <span className="help-icon">
-              <Sprout size={20} />
+              <Sprout size={18} />
             </span>
             <h4>A little room to grow.</h4>
             <p>
@@ -378,20 +1162,26 @@ export default function Home() {
               <br />
               We’ll keep track of the seats.
             </p>
+            {operational && totalCapacity > 0 && (
+              <div className="sidebar-capacity-mini">
+                <div>
+                  <small>Programme fill</small>
+                  <strong>{occupancyRate}%</strong>
+                </div>
+                <div className="progress">
+                  <span style={{ width: `${occupancyRate}%` }} />
+                </div>
+              </div>
+            )}
           </div>
           <div className="user-block">
-            <div className="avatar">
-              {profile.name
-                .split(" ")
-                .map((n) => n[0])
-                .join("")}
-            </div>
+            <div className="avatar">{initials(profile.name)}</div>
             <div>
               <strong>{profile.name}</strong>
               <small>{profile.role}</small>
             </div>
             <button onClick={signout} title="Sign out" aria-label="Sign out">
-              <LogOut size={17} />
+              <LogOut size={16} />
             </button>
           </div>
         </div>
@@ -402,10 +1192,13 @@ export default function Home() {
             Workspace <ChevronRight size={13} /> <strong>{page}</strong>
           </span>
           <div>
-            <span className="live-dot" />
-            Staff workspace
+            <span className="topbar-meta-pill">
+              <span className="live-dot" />
+              Staff workspace
+            </span>
             <button
               aria-label="Refresh data"
+              title="Refresh data"
               onClick={() => {
                 reload().catch((e) => setError(e.message));
               }}
@@ -423,13 +1216,26 @@ export default function Home() {
                   : "PEOPLE BEHIND THE PROGRAMME"}
               </div>
               <h1>
-                {page === "Workshops"
-                  ? "Your next great gathering."
-                  : page === "Registrations"
-                    ? "Every seat has a story."
-                    : page === "Team"
-                      ? "A good team starts here."
-                      : "The story so far."}
+                {page === "Workshops" ? (
+                  <>
+                    Your next great{" "}
+                    <em className="editorial-italic">gathering.</em>
+                  </>
+                ) : page === "Registrations" ? (
+                  <>
+                    Every seat has a{" "}
+                    <em className="editorial-italic">story.</em>
+                  </>
+                ) : page === "Team" ? (
+                  <>
+                    A good team starts{" "}
+                    <em className="editorial-italic">here.</em>
+                  </>
+                ) : (
+                  <>
+                    The story <em className="editorial-italic">so far.</em>
+                  </>
+                )}
               </h1>
               <p>
                 {page === "Workshops"
@@ -482,36 +1288,53 @@ export default function Home() {
                   <span className="stat-icon">
                     <CalendarDays />
                   </span>
-                  <div>
+                  <div style={{ flex: 1 }}>
                     <small>Upcoming workshops</small>
                     <strong>
                       {active.length}
                       <span>on the calendar</span>
                     </strong>
+                    <div className="stat-bar">
+                      <span
+                        style={{
+                          width: `${data.workshops.length ? Math.max(18, Math.round((active.length / data.workshops.length) * 100)) : 35}%`,
+                        }}
+                      />
+                    </div>
                   </div>
                 </div>
                 <div>
                   <span className="stat-icon">
                     <Users />
                   </span>
-                  <div>
+                  <div style={{ flex: 1 }}>
                     <small>Confirmed attendees</small>
                     <strong>
                       {total}
                       <span>ready to join in</span>
                     </strong>
+                    <div className="stat-bar">
+                      <span style={{ width: `${Math.max(12, occupancyRate)}%` }} />
+                    </div>
                   </div>
                 </div>
                 <div>
                   <span className="stat-icon">
                     <Sprout />
                   </span>
-                  <div>
+                  <div style={{ flex: 1 }}>
                     <small>Seats still available</small>
                     <strong>
                       {seats}
                       <span>room for more</span>
                     </strong>
+                    <div className="stat-bar">
+                      <span
+                        style={{
+                          width: `${totalCapacity > 0 ? Math.max(12, 100 - occupancyRate) : 65}%`,
+                        }}
+                      />
+                    </div>
                   </div>
                 </div>
               </div>
@@ -520,8 +1343,65 @@ export default function Home() {
                   <h2>
                     Workshop catalogue <span>{filtered.length}</span>
                   </h2>
-                  <small>All times shown in your local timezone</small>
+                  <small>
+                    <Clock size={13} /> All times shown in your local timezone
+                  </small>
                 </div>
+
+                {categories.length > 0 && (
+                  <div className="catalogue-toolbar">
+                    <div className="category-pills">
+                      <button
+                        type="button"
+                        className={
+                          categoryFilter === "all"
+                            ? "cat-pill active"
+                            : "cat-pill"
+                        }
+                        onClick={() => setCategoryFilter("all")}
+                      >
+                        All themes
+                      </button>
+                      {categories.map((cat) => (
+                        <button
+                          type="button"
+                          key={cat}
+                          className={
+                            categoryFilter === cat
+                              ? "cat-pill active"
+                              : "cat-pill"
+                          }
+                          onClick={() =>
+                            setCategoryFilter(
+                              categoryFilter === cat ? "all" : cat,
+                            )
+                          }
+                        >
+                          {cat}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="view-toggle" role="group" aria-label="Catalogue layout">
+                      <button
+                        type="button"
+                        className={viewMode === "grid" ? "active" : ""}
+                        onClick={() => setViewMode("grid")}
+                      >
+                        <LayoutGrid size={14} />
+                        Gallery
+                      </button>
+                      <button
+                        type="button"
+                        className={viewMode === "list" ? "active" : ""}
+                        onClick={() => setViewMode("list")}
+                      >
+                        <Rows3 size={14} />
+                        Schedule
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 <div className="filters">
                   <div className="search">
                     <Search size={17} />
@@ -531,6 +1411,21 @@ export default function Home() {
                       value={search}
                       onChange={(e) => setSearch(e.target.value)}
                     />
+                    {search && (
+                      <button
+                        type="button"
+                        aria-label="Clear search"
+                        style={{
+                          border: 0,
+                          background: "none",
+                          color: "#889480",
+                          padding: 4,
+                        }}
+                        onClick={() => setSearch("")}
+                      >
+                        <X size={14} />
+                      </button>
+                    )}
                   </div>
                   <select
                     aria-label="Workshop location"
@@ -564,30 +1459,31 @@ export default function Home() {
                   </button>
                 </div>
                 <div className="date-filters">
-                  <label>
-                    From{" "}
-                    <input
-                      type="date"
-                      aria-label="From date"
+                  <div className="date-filter-item">
+                    <span>From</span>
+                    <BotanicalDatePicker
+                      ariaLabel="From date"
+                      placeholder="Start date"
                       value={from}
-                      onChange={(e) => setFrom(e.target.value)}
+                      onChange={setFrom}
                     />
-                  </label>
+                  </div>
                   <span>—</span>
-                  <label>
-                    To{" "}
-                    <input
-                      type="date"
-                      aria-label="To date"
+                  <div className="date-filter-item">
+                    <span>To</span>
+                    <BotanicalDatePicker
+                      ariaLabel="To date"
+                      placeholder="End date"
                       value={to}
                       min={from}
-                      onChange={(e) => setTo(e.target.value)}
+                      onChange={setTo}
                     />
-                  </label>
+                  </div>
                   {(from ||
                     to ||
                     available ||
                     search ||
+                    categoryFilter !== "all" ||
                     status !== "all" ||
                     location !== "all") && (
                     <button
@@ -597,6 +1493,7 @@ export default function Home() {
                         setSearch("");
                         setStatus("all");
                         setLocation("all");
+                        setCategoryFilter("all");
                         setAvailable(false);
                       }}
                     >
@@ -607,17 +1504,31 @@ export default function Home() {
                     {filtered.length} workshop{filtered.length === 1 ? "" : "s"}
                   </span>
                 </div>
-                <div className="workshop-grid">
+                <div
+                  className={
+                    viewMode === "list"
+                      ? "workshop-grid list-view"
+                      : "workshop-grid"
+                  }
+                >
                   {filtered.map((w, i) => {
                     const full = w.active_count >= w.capacity,
                       closed =
                         w.status !== "scheduled" ||
-                        new Date(w.starts_at) <= new Date();
+                        new Date(w.starts_at) <= new Date(),
+                      artTheme =
+                        w.category === "Technology"
+                          ? "code"
+                          : w.category === "Wellbeing"
+                            ? "well"
+                            : w.category === "Food & Living"
+                              ? "food"
+                              : i % 2
+                                ? "paint"
+                                : "clay";
                     return (
                       <article className="workshop-card" key={w.id}>
-                        <div
-                          className={`card-art art-${w.category === "Technology" ? "code" : w.category === "Wellbeing" ? "well" : w.category === "Food & Living" ? "food" : i % 2 ? "paint" : "clay"}`}
-                        >
+                        <div className={`card-art art-${artTheme}`}>
                           <span className="category">{w.category}</span>
                           <span
                             className={`badge ${full ? "full" : closed ? "closed" : ""}`}
@@ -644,67 +1555,71 @@ export default function Home() {
                           </span>
                         </div>
                         <div className="card-body">
-                          <span className="workshop-code">{w.code}</span>
-                          <h3>
-                            <button onClick={() => setSelected(w)}>
-                              {w.title}
-                            </button>
-                          </h3>
-                          <p className="instructor">with {w.instructor}</p>
-                          <div className="card-meta">
-                            <span>
-                              <CalendarDays size={14} />
-                              {date(w.starts_at)}
-                              <span className="meta-dot">·</span>
-                              {time(w.starts_at)}
-                            </span>
-                            <span>
-                              <MapPin size={14} />
-                              {w.location}
-                              <span className="meta-dot">·</span>
-                              {w.duration_minutes} min
-                            </span>
+                          <div>
+                            <span className="workshop-code">{w.code}</span>
+                            <h3>
+                              <button onClick={() => setSelected(w)}>
+                                {w.title}
+                              </button>
+                            </h3>
+                            <p className="instructor">with {w.instructor}</p>
+                            <div className="card-meta">
+                              <span>
+                                <CalendarDays size={14} />
+                                {date(w.starts_at)}
+                                <span className="meta-dot">·</span>
+                                {time(w.starts_at)}
+                              </span>
+                              <span>
+                                <MapPin size={14} />
+                                {w.location}
+                                <span className="meta-dot">·</span>
+                                {w.duration_minutes} min
+                              </span>
+                            </div>
                           </div>
-                          <div className="capacity-label">
-                            <span>
-                              <strong>{w.capacity - w.active_count}</strong>{" "}
-                              seats available
-                            </span>
-                            <small>
-                              {w.active_count} / {w.capacity} booked
-                            </small>
-                          </div>
-                          <div className="progress">
-                            <span
-                              style={{
-                                width: `${(w.active_count / w.capacity) * 100}%`,
-                              }}
-                            />
-                          </div>
-                          <div className="card-footer">
-                            <button
-                              className="text-button"
-                              onClick={() => setSelected(w)}
-                            >
-                              View details
-                              <ArrowUpRight size={14} />
-                            </button>
-                            <button
-                              className="book-button"
-                              disabled={full || closed}
-                              onClick={() => {
-                                setSelected(w);
-                                setModal("register");
-                                setError("");
-                              }}
-                            >
-                              {full
-                                ? "Fully booked"
-                                : closed
-                                  ? "Closed"
-                                  : "Register attendee"}
-                              {!full && !closed && <Plus size={14} />}
-                            </button>
+                          <div>
+                            <div className="capacity-label">
+                              <span>
+                                <strong>{w.capacity - w.active_count}</strong>{" "}
+                                seats available
+                              </span>
+                              <small>
+                                {w.active_count} / {w.capacity} booked
+                              </small>
+                            </div>
+                            <div className="progress">
+                              <span
+                                style={{
+                                  width: `${Math.min(100, (w.active_count / w.capacity) * 100)}%`,
+                                }}
+                              />
+                            </div>
+                            <div className="card-footer">
+                              <button
+                                className="text-button"
+                                onClick={() => setSelected(w)}
+                              >
+                                View details
+                                <ArrowUpRight size={14} />
+                              </button>
+                              <button
+                                className="book-button"
+                                disabled={full || closed}
+                                onClick={() => {
+                                  setSelected(w);
+                                  setModal("register");
+                                  setError("");
+                                }}
+                              >
+                                {full
+                                  ? "Fully booked"
+                                  : closed
+                                    ? "Closed"
+                                    : "Register attendee"}
+                                {!full && !closed && <Plus size={14} />}
+                              </button>
+                            </div>
                           </div>
                         </div>
                       </article>
@@ -732,6 +1647,24 @@ export default function Home() {
                 <h2>
                   Registration history <span>{data.registrations.length}</span>
                 </h2>
+                <div className="category-pills">
+                  {(["all", "active", "cancelled"] as const).map((st) => (
+                    <button
+                      key={st}
+                      type="button"
+                      className={
+                        regStatusFilter === st ? "cat-pill active" : "cat-pill"
+                      }
+                      onClick={() => setRegStatusFilter(st)}
+                    >
+                      {st === "all"
+                        ? "All records"
+                        : st === "active"
+                          ? "Active"
+                          : "Cancelled"}
+                    </button>
+                  ))}
+                </div>
               </div>
               <div className="search standalone">
                 <Search size={17} />
@@ -755,28 +1688,32 @@ export default function Home() {
                     </tr>
                   </thead>
                   <tbody>
-                    {data.registrations
-                      .filter((r) =>
-                        (
-                          r.attendee_name +
-                          r.attendee_email +
-                          data.workshops.find((w) => w.id === r.workshop_id)
-                            ?.title
-                        )
-                          .toLowerCase()
-                          .includes(search.toLowerCase()),
-                      )
-                      .map((r) => (
+                    {filteredRegistrations.map((r) => {
+                      const workshop = data.workshops.find(
+                        (w) => w.id === r.workshop_id,
+                      );
+                      return (
                         <tr key={r.id}>
                           <td>
-                            <strong>{r.attendee_name}</strong>
-                            <small>{r.attendee_email}</small>
+                            <div className="table-person">
+                              <span className="avatar">
+                                {initials(r.attendee_name)}
+                              </span>
+                              <div>
+                                <strong>{r.attendee_name}</strong>
+                                <small>{r.attendee_email}</small>
+                              </div>
+                            </div>
                           </td>
                           <td>
-                            {
-                              data.workshops.find((w) => w.id === r.workshop_id)
-                                ?.title
-                            }
+                            {workshop ? (
+                              <div>
+                                <strong>{workshop.title}</strong>
+                                <small>{workshop.code}</small>
+                              </div>
+                            ) : (
+                              "—"
+                            )}
                           </td>
                           <td>
                             <span className={`pill ${r.status}`}>
@@ -812,7 +1749,8 @@ export default function Home() {
                             )}
                           </td>
                         </tr>
-                      ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -847,12 +1785,7 @@ export default function Home() {
                       <tr key={u.id}>
                         <td>
                           <div className="table-person">
-                            <span className="avatar">
-                              {u.name
-                                .split(" ")
-                                .map((n) => n[0])
-                                .join("")}
-                            </span>
+                            <span className="avatar">{initials(u.name)}</span>
                             <strong>
                               {u.name}
                               {u.id === profile.id && <small>You</small>}
@@ -906,46 +1839,27 @@ export default function Home() {
             <section className="panel">
               <div className="section-heading">
                 <h2>
-                  Activity log{" "}
-                  <span>
-                    {
-                      data.audit.filter((a) =>
-                        operational
-                          ? !["account_created", "role_changed"].includes(
-                              a.action,
-                            )
-                          : ["account_created", "role_changed"].includes(
-                              a.action,
-                            ),
-                      ).length
-                    }
-                  </span>
+                  Activity log <span>{auditFiltered.length}</span>
                 </h2>
                 <small>History is preserved automatically</small>
               </div>
-              {data.audit
-                .filter((a) =>
-                  operational
-                    ? !["account_created", "role_changed"].includes(a.action)
-                    : ["account_created", "role_changed"].includes(a.action),
-                )
-                .map((a) => (
-                  <div className="activity-row" key={a.id}>
-                    <span className="activity-icon">
-                      <History size={17} />
-                    </span>
-                    <div>
-                      <strong>{a.actor_name}</strong>{" "}
-                      <span>{human(a.action)}</span>
-                      <small>
-                        {date(a.created_at)} at {time(a.created_at)}
-                      </small>
-                      {!!a.details.attendee_name && (
-                        <small>{String(a.details.attendee_name)}</small>
-                      )}
-                    </div>
+              {auditFiltered.map((a) => (
+                <div className="activity-row" key={a.id}>
+                  <span className="activity-icon">
+                    <History size={17} />
+                  </span>
+                  <div>
+                    <strong>{a.actor_name}</strong>{" "}
+                    <span>{human(a.action)}</span>
+                    <small>
+                      {date(a.created_at)} at {time(a.created_at)}
+                    </small>
+                    {!!a.details.attendee_name && (
+                      <small>{String(a.details.attendee_name)}</small>
+                    )}
                   </div>
-                ))}
+                </div>
+              ))}
               {!data.audit.length && (
                 <div className="empty">
                   <History />
@@ -982,6 +1896,41 @@ export default function Home() {
             aria-label="Workshop details"
             onClick={(e) => e.stopPropagation()}
           >
+            <div
+              className={`detail-art-banner card-art art-${
+                current.category === "Technology"
+                  ? "code"
+                  : current.category === "Wellbeing"
+                    ? "well"
+                    : current.category === "Food & Living"
+                      ? "food"
+                      : "clay"
+              }`}
+            >
+              <span className="category">{current.category}</span>
+              <span
+                className={`badge ${
+                  current.active_count >= current.capacity
+                    ? "full"
+                    : current.status !== "scheduled" ||
+                        new Date(current.starts_at) <= new Date()
+                      ? "closed"
+                      : ""
+                }`}
+              >
+                {current.status !== "scheduled" ||
+                new Date(current.starts_at) <= new Date()
+                  ? human(current.status)
+                  : current.active_count >= current.capacity
+                    ? "Fully booked"
+                    : "Open for registration"}
+              </span>
+              <div className="art-shape">
+                <span />
+                <span />
+                <span />
+              </div>
+            </div>
             <button
               className="close"
               aria-label="Close details"
@@ -1013,8 +1962,24 @@ export default function Home() {
               </span>
             </div>
             <div className="detail-capacity">
-              <strong>{current.capacity - current.active_count}</strong>
-              <span>of {current.capacity} seats available</span>
+              <div className="detail-capacity-main">
+                <strong>{current.capacity - current.active_count}</strong>
+                <span>of {current.capacity} seats available</span>
+              </div>
+              {current.capacity <= 40 && (
+                <div className="seat-matrix" aria-hidden="true">
+                  {Array.from({ length: current.capacity }, (_, idx) => (
+                    <span
+                      key={idx}
+                      className={
+                        idx < current.active_count
+                          ? "seat-dot occupied"
+                          : "seat-dot"
+                      }
+                    />
+                  ))}
+                </div>
+              )}
             </div>
             <div className="detail-actions">
               <button
@@ -1265,13 +2230,10 @@ export default function Home() {
                       defaultValue={editing?.instructor}
                     />
                   </label>
-                  <div className="form-row">
-                    <label>
-                      Date & time
-                      <input
-                        name="starts_at"
-                        type="datetime-local"
-                        required
+                  <div className="form-row form-row-datetime">
+                    <div className="field-group">
+                      <span className="field-label">Date & time</span>
+                      <BotanicalDateTimePicker
                         defaultValue={
                           editing
                             ? new Date(
@@ -1286,31 +2248,30 @@ export default function Home() {
                             : ""
                         }
                       />
-                    </label>
-                    <label>
-                      Duration (minutes)
-                      <input
+                    </div>
+                    <div className="field-group">
+                      <span className="field-label">Duration (minutes)</span>
+                      <BotanicalNumberStepper
                         name="duration_minutes"
-                        type="number"
-                        required
                         min={15}
                         max={720}
+                        step={15}
                         defaultValue={editing?.duration_minutes || 90}
+                        presets={[60, 90, 120, 180]}
                       />
-                    </label>
+                    </div>
                   </div>
                   <div className="form-row">
-                    <label>
-                      Capacity
-                      <input
+                    <div className="field-group">
+                      <span className="field-label">Capacity</span>
+                      <BotanicalNumberStepper
                         name="capacity"
-                        type="number"
-                        required
                         min={editing?.active_count || 1}
                         max={1000}
+                        step={1}
                         defaultValue={editing?.capacity || 12}
                       />
-                    </label>
+                    </div>
                     <label>
                       Status
                       <select
